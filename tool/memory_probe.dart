@@ -4,13 +4,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto_io.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 
 Future<void> main(List<String> args) async {
   final mib = args.isEmpty ? 256 : int.parse(args.first);
   final dir = Directory.systemTemp.createTempSync('qc_mem_');
   try {
-    final engine = QuantumCryptoEngine();
+    final engine = PostQuantumCryptoEngine();
     final kp = engine.generateEncryptionKeyPair();
     final src = File('${dir.path}/big.bin');
     final sink = src.openWrite();

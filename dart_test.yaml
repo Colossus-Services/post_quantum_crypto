@@ -12,7 +12,7 @@ tags:
   fuzz:
   # Long-running tests (large files, SLH-DSA signing).
   slow:
-  # The `version` tag marks the test asserting quantumCryptoVersion matches
+  # The `version` tag marks the test asserting postQuantumCryptoVersion matches
   # pubspec.yaml (test/unit/version_test.dart).
   version:
   # Tests that run in browsers (dart2js and dart2wasm).

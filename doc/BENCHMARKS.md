@@ -1,7 +1,7 @@
 # Benchmarks
 
 Measured with `benchmark/main.dart` on 2026-10-27, Apple M-series (arm64),
-macOS 26, Dart SDK 3.13.5, quantum_crypto 1.0.0 with the default
+macOS 26, Dart SDK 3.13.5, post_quantum_crypto 1.0.0 with the default
 `standardCryptoBackend`. Single-threaded; mean per operation. Expect large
 variation across devices; mobile and low-end hardware will be slower.
 

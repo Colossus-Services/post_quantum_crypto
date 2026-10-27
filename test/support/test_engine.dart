@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 
 /// A deterministic, seeded byte source **for tests only**.
 ///
@@ -40,13 +40,13 @@ final class DeterministicRandom implements SecureRandomSource {
 }
 
 /// A production engine (system CSPRNG).
-final QuantumCryptoEngine engine = QuantumCryptoEngine();
+final PostQuantumCryptoEngine engine = PostQuantumCryptoEngine();
 
 /// A deterministic engine for reproducible tests.
-QuantumCryptoEngine deterministicEngine([
+PostQuantumCryptoEngine deterministicEngine([
   int seed = 1,
   SecurityPolicy policy = SecurityPolicy.standard,
-]) => QuantumCryptoEngine.withRandomSourceForTesting(
+]) => PostQuantumCryptoEngine.withRandomSourceForTesting(
   DeterministicRandom(seed),
   policy: policy,
 );

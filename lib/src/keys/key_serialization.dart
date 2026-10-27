@@ -6,7 +6,7 @@
 ///   X.509 `SubjectPublicKeyInfo` and PKCS#8 `OneAsymmetricKey` DER with the
 ///   NIST OIDs (RFC 9881 for ML-DSA, RFC 9909 for SLH-DSA,
 ///   draft-ietf-lamps-kyber-certificates for ML-KEM), and PEM.
-/// - **Package-specific**: the `QCRY` key record, which also carries
+/// - **Package-specific**: the `PQCR` key record, which also carries
 ///   [KeyMetadata]. X-Wing keys only have this form.
 library;
 
@@ -83,10 +83,10 @@ final class KeyCodec {
   KeyCodec(this._factory);
 
   // ---------------------------------------------------------------------------
-  // QCRY key record
+  // PQCR key record
   // ---------------------------------------------------------------------------
 
-  /// `QCRY 01 07 || u8 kind || u16 alg || bytes32 publicKey ||
+  /// `PQCR 01 07 || u8 kind || u16 alg || bytes32 publicKey ||
   /// [u8 form || bytes32 privateMaterial] || metadata`.
   Uint8List encodeRecord(QuantumKey key) {
     final w = ByteWriter();

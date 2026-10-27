@@ -1,7 +1,7 @@
 /// Seeded mutation fuzzing of every public parser and decoder.
 ///
 /// Property: for any input, a parser either succeeds or throws a
-/// [QuantumCryptoException]; it never throws `RangeError`, `StateError`,
+/// [PostQuantumCryptoException]; it never throws `RangeError`, `StateError`,
 /// `TypeError`, `ArgumentError` or similar, and never hangs. Set
 /// `QC_FUZZ_ITERATIONS` to run longer (default 300 per target).
 @Tags(['fuzz'])
@@ -11,7 +11,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -66,7 +66,7 @@ void _fuzz(String name, Uint8List seed, void Function(Uint8List) parse) {
           : _mutate(rnd, seed);
       try {
         parse(input);
-      } on QuantumCryptoException {
+      } on PostQuantumCryptoException {
         // expected
       } catch (e, st) {
         fail('iteration $i: unexpected ${e.runtimeType}: $e\n$st');
@@ -187,7 +187,7 @@ void main() {
         await engine
             .decryptStream(Stream.value(input), privateKey: enc.privateKey)
             .drain<void>();
-      } on QuantumCryptoException {
+      } on PostQuantumCryptoException {
         // expected
       } catch (e, st) {
         fail('iteration $i: unexpected ${e.runtimeType}: $e\n$st');

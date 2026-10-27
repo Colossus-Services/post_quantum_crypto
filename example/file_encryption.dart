@@ -3,10 +3,10 @@
 // Run with: dart run example/file_encryption.dart
 import 'dart:io';
 
-import 'package:quantum_crypto/quantum_crypto_io.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 
 Future<void> main() async {
-  final engine = QuantumCryptoEngine();
+  final engine = PostQuantumCryptoEngine();
   final dir = Directory.systemTemp.createTempSync('qc_example_');
   try {
     // A key store backed by a directory; private keys are Argon2id-encrypted.

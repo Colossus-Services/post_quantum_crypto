@@ -1,11 +1,11 @@
-# quantum_crypto
+# post_quantum_crypto
 
-[![pub package](https://img.shields.io/pub/v/quantum_crypto.svg?logo=dart&logoColor=00b9fc)](https://pub.dev/packages/quantum_crypto)
+[![pub package](https://img.shields.io/pub/v/post_quantum_crypto.svg?logo=dart&logoColor=00b9fc)](https://pub.dev/packages/post_quantum_crypto)
 [![Null Safety](https://img.shields.io/badge/null-safety-brightgreen)](https://dart.dev/null-safety)
-[![Dart CI](https://github.com/Colossus-Services/quantum_crypto/actions/workflows/dart.yml/badge.svg?branch=main)](https://github.com/Colossus-Services/quantum_crypto/actions/workflows/dart.yml)
-[![GitHub Tag](https://img.shields.io/github/v/tag/Colossus-Services/quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/quantum_crypto/releases)
-[![Last Commits](https://img.shields.io/github/last-commit/Colossus-Services/quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/quantum_crypto/commits/main)
-[![License](https://img.shields.io/github/license/Colossus-Services/quantum_crypto?logo=open-source-initiative&logoColor=green)](https://github.com/Colossus-Services/quantum_crypto/blob/main/LICENSE)
+[![Dart CI](https://github.com/Colossus-Services/post_quantum_crypto/actions/workflows/dart.yml/badge.svg?branch=main)](https://github.com/Colossus-Services/post_quantum_crypto/actions/workflows/dart.yml)
+[![GitHub Tag](https://img.shields.io/github/v/tag/Colossus-Services/post_quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/post_quantum_crypto/releases)
+[![Last Commits](https://img.shields.io/github/last-commit/Colossus-Services/post_quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/post_quantum_crypto/commits/main)
+[![License](https://img.shields.io/github/license/Colossus-Services/post_quantum_crypto?logo=open-source-initiative&logoColor=green)](https://github.com/Colossus-Services/post_quantum_crypto/blob/main/LICENSE)
 
 **High-level post-quantum cryptography for Dart and Flutter**, in pure Dart:
 
@@ -32,24 +32,24 @@ WebAssembly** with no native libraries.
 
 See the [API Documentation][api_doc] for the full list of classes and APIs.
 
-[api_doc]: https://pub.dev/documentation/quantum_crypto/latest/
+[api_doc]: https://pub.dev/documentation/post_quantum_crypto/latest/
 
 ## Installation
 
 ```sh
-dart pub add quantum_crypto
+dart pub add post_quantum_crypto
 ```
 
 ```dart
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 // File helpers (VM / Flutter native only):
-import 'package:quantum_crypto/quantum_crypto_io.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 ```
 
 ## Quick start
 
 ```dart
-final engine = QuantumCryptoEngine();
+final engine = PostQuantumCryptoEngine();
 
 // Encryption keys (ML-KEM-768 by default).
 final recipient = engine.generateEncryptionKeyPair();
@@ -72,7 +72,7 @@ final ok = engine.verify(
 );
 ```
 
-`QuantumCrypto.encrypt(...)`, `QuantumCrypto.sign(...)` etc. are static
+`PostQuantumCrypto.encrypt(...)`, `PostQuantumCrypto.sign(...)` etc. are static
 shortcuts to a default engine.
 
 **All operations are synchronous and CPU-bound** (microseconds to
@@ -281,7 +281,7 @@ Keystore, DPAPI, a KMS). `FileKeyStorage` is not hardware-backed.
 ## Security policies
 
 ```dart
-final engine = QuantumCryptoEngine(
+final engine = PostQuantumCryptoEngine(
   policy: SecurityPolicy(
     minimumSecurityCategory: 3,              // no ML-KEM-512 / ML-DSA-44
     requireHybridKem: true,                  // X-Wing only
@@ -297,7 +297,7 @@ revoked or usage-restricted keys are refused by default.
 
 ## Errors
 
-Every error is a `QuantumCryptoException`: `InvalidInputException`,
+Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 `MalformedDataException`, `UnsupportedAlgorithmException`,
 `UnsupportedFormatException`, `InvalidKeyException`,
 `DecryptionFailedException`, `SignatureVerificationException`,
@@ -325,7 +325,7 @@ To swap a library, for example a native AES or a platform keystore, write a
 provider and build a `CryptoBackend`:
 
 ```dart
-final engine = QuantumCryptoEngine(
+final engine = PostQuantumCryptoEngine(
   backend: standardCryptoBackend.copyWith(symmetric: MyNativeSymmetricProvider()),
 );
 ```
@@ -345,7 +345,7 @@ providers; a replacement should pass it unchanged.
 | Flutter Android / iOS / desktop | ✔ pure Dart, same code as the VM (not separately CI-tested) |
 | Web, dart2js | ✔ `test/browser` in Chrome (CI) |
 | Web, dart2wasm | ✔ `test/browser` in Chrome (CI) |
-| `quantum_crypto_io.dart` (files, `FileKeyStorage`) | VM / Flutter native only |
+| `post_quantum_crypto_io.dart` (files, `FileKeyStorage`) | VM / Flutter native only |
 | `runInBackground` | real isolate on native; inline on the web |
 
 Secure randomness is `Random.secure()` (OS CSPRNG on native,
@@ -364,7 +364,7 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
 ## Formats and interoperability
 
 - [doc/FORMATS.md](doc/FORMATS.md) specifies every binary format. All are
-  versioned (`QCRY` + version + type), strictly parsed and bounded.
+  versioned (`PQCR` + version + type), strictly parsed and bounded.
 - **Standard and interoperable:** FIPS 203/204/205 raw keys and signatures,
   SPKI/PKCS#8 DER/PEM (tested against OpenSSL 3.6), and HPKE key wrapping
   (verified with draft-ietf-hpke-pq vectors).

@@ -16,7 +16,7 @@ import 'password_protection.dart';
 /// Implement this to back a [KeyStore] with platform secure storage (Android
 /// Keystore-wrapped preferences, iOS/macOS Keychain, Windows DPAPI, a cloud
 /// KMS, ...). The core package ships only [InMemoryKeyStorage] and, in
-/// `quantum_crypto_io.dart`, `FileKeyStorage`; neither is hardware-backed.
+/// `post_quantum_crypto_io.dart`, `FileKeyStorage`; neither is hardware-backed.
 abstract interface class KeyStorage {
   Future<Uint8List?> read(String name);
 
@@ -64,7 +64,7 @@ QuantumKey _withMetadata(QuantumKey key, KeyMetadata m) => switch (key) {
 /// otherwise they are stored as plain key records and the security of the
 /// store is that of the [KeyStorage]. Public keys are stored in clear.
 final class KeyStore {
-  final QuantumCryptoEngine engine;
+  final PostQuantumCryptoEngine engine;
   final KeyStorage storage;
   final String? _password;
   final Argon2idParameters? _parameters;
@@ -232,7 +232,7 @@ final class KeyStore {
     return next;
   }
 
-  static const _backupContext = {'type': 'quantum_crypto/key-backup'};
+  static const _backupContext = {'type': 'post_quantum_crypto/key-backup'};
 
   /// Exports every stored key into one Argon2id-encrypted backup.
   Future<Uint8List> backup(

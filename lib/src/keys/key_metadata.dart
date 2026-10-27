@@ -33,7 +33,7 @@ enum KeyUsage {
 
 /// A key identifier: a SHA-256 fingerprint of the algorithm and public key.
 ///
-/// `KeyId = SHA-256("quantum_crypto/v1/key-id" || 0x00 || kind || u16 alg ||
+/// `KeyId = SHA-256("post_quantum_crypto/v1/key-id" || 0x00 || kind || u16 alg ||
 /// publicKey)`, where `kind` is 1 for encryption and 2 for signing keys. The
 /// identifier is public and is not a secret.
 final class KeyId {

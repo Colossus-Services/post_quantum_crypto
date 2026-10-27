@@ -5,7 +5,7 @@
 /// Header:
 ///
 /// ```text
-/// "QCRY" u8 version=1 u8 type=0x03
+/// "PQCR" u8 version=1 u8 type=0x03
 /// u16 kdfId (HKDF-SHA-384) | u16 aeadId
 /// u32 chunkSize                      plaintext bytes per chunk
 /// 32  salt | 7 noncePrefix
@@ -16,7 +16,7 @@
 /// chunk*                             ciphertext || tag, no framing
 /// ```
 ///
-/// - Stream key: `HKDF-SHA-384(salt, DEK, "quantum_crypto/v1/stream/key" ||
+/// - Stream key: `HKDF-SHA-384(salt, DEK, "post_quantum_crypto/v1/stream/key" ||
 ///   headerHash)`. The DEK is fresh for every stream, so every stream has a
 ///   fresh key and nonces can never repeat across streams.
 /// - Chunk `i` nonce: `noncePrefix(7) || u32 i || u8 final`, AAD:
@@ -216,7 +216,9 @@ final class StreamService {
 
   StreamService(this._ctx) : _wrapper = KeyWrapper(_ctx, 'stream');
 
-  static final Uint8List _keyLabel = utf8Bytes('quantum_crypto/v1/stream/key');
+  static final Uint8List _keyLabel = utf8Bytes(
+    'post_quantum_crypto/v1/stream/key',
+  );
 
   Uint8List _streamKey(Uint8List dek, StreamHeader h) {
     final kdf = _ctx.hkdfSha384;
@@ -470,7 +472,7 @@ T parseStrictIncremental<T>(T Function() parse) {
     return parse();
   } on InsufficientDataError {
     rethrow;
-  } on QuantumCryptoException {
+  } on PostQuantumCryptoException {
     rethrow;
   } on FormatException {
     throw const MalformedDataException('Invalid encoding');

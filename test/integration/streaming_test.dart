@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -210,7 +210,7 @@ void main() {
       h[13] ^= 0x01; // low byte of chunkSize
       await expectLater(
         decrypt(join([h, ...parts.skip(1)])),
-        throwsA(isA<QuantumCryptoException>()),
+        throwsA(isA<PostQuantumCryptoException>()),
       );
     });
 

@@ -5,19 +5,19 @@ import 'encryption/envelope.dart';
 import 'engine.dart';
 import 'keys/keys.dart';
 
-/// Shortcuts to a default [QuantumCryptoEngine] (pure-Dart backend,
+/// Shortcuts to a default [PostQuantumCryptoEngine] (pure-Dart backend,
 /// [SecurityPolicy.standard]).
 ///
 /// ```dart
-/// final keys = QuantumCrypto.generateEncryptionKeyPair();
-/// final env = QuantumCrypto.encrypt(data, recipients: [keys.publicKey]);
-/// final pt = QuantumCrypto.decrypt(env, privateKey: keys.privateKey);
+/// final keys = PostQuantumCrypto.generateEncryptionKeyPair();
+/// final env = PostQuantumCrypto.encrypt(data, recipients: [keys.publicKey]);
+/// final pt = PostQuantumCrypto.decrypt(env, privateKey: keys.privateKey);
 /// ```
 ///
 /// These calls are synchronous and CPU-bound; see `runInBackground`.
-abstract final class QuantumCrypto {
+abstract final class PostQuantumCrypto {
   /// The default engine.
-  static final QuantumCryptoEngine engine = QuantumCryptoEngine();
+  static final PostQuantumCryptoEngine engine = PostQuantumCryptoEngine();
 
   static EncryptionKeyPair generateEncryptionKeyPair({
     KemAlgorithm algorithm = KemAlgorithm.mlKem768,

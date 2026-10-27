@@ -1,4 +1,4 @@
-/// Builds the published format test vectors for quantum_crypto v1.
+/// Builds the published format test vectors for post_quantum_crypto v1.
 ///
 /// Every object is produced by a deterministic engine, so the output is
 /// reproducible; `format_vectors_test.dart` checks both that the stored
@@ -11,7 +11,7 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 
 import '../support/test_engine.dart';
 
@@ -24,7 +24,7 @@ const _argon = Argon2idParameters(
 );
 
 const formatTranscript = HybridTranscript(
-  protocol: 'quantum_crypto/test-vectors',
+  protocol: 'post_quantum_crypto/test-vectors',
   initiatorId: 'alice',
   responderId: 'bob',
   extra: {'session': '1'},
@@ -41,7 +41,7 @@ Future<Map<String, Object>> buildFormatVectors() async {
   );
   final mldsa = e.generateSigningKeyPair(metadata: created);
 
-  final plaintext = utf8.encode('quantum_crypto format test vector');
+  final plaintext = utf8.encode('post_quantum_crypto format test vector');
   final context = {'purpose': 'test-vector', 'tenant': 'example'};
 
   final envelope = e.encrypt(
@@ -91,7 +91,7 @@ Future<Map<String, Object>> buildFormatVectors() async {
 
   return {
     'description':
-        'quantum_crypto format v1 test vectors. Keys are given as seeds; '
+        'post_quantum_crypto format v1 test vectors. Keys are given as seeds; '
         'all objects are canonical binary encodings in hex. See '
         'doc/FORMATS.md.',
     'version': 1,

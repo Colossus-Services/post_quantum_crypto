@@ -1,4 +1,4 @@
-// Micro-benchmarks for quantum_crypto.
+// Micro-benchmarks for post_quantum_crypto.
 //
 //   dart run benchmark/main.dart                      (VM, JIT)
 //   dart compile exe benchmark/main.dart -o /tmp/qcb && /tmp/qcb   (AOT)
@@ -9,7 +9,7 @@
 // budget. Numbers depend heavily on the platform and compiler.
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 
 void _bench(String name, void Function() op, {int bytes = 0}) {
   op(); // warm-up
@@ -29,7 +29,7 @@ void _bench(String name, void Function() op, {int bytes = 0}) {
 }
 
 void main() {
-  final engine = QuantumCryptoEngine();
+  final engine = PostQuantumCryptoEngine();
   final sym = engine.backend.symmetric;
   const mib = 1 << 20;
   final data = Uint8List(mib);

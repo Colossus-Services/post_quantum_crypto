@@ -1,10 +1,10 @@
-// Quick tour of quantum_crypto. Run with: dart run example/quantum_crypto_example.dart
+// Quick tour of post_quantum_crypto. Run with: dart run example/post_quantum_crypto_example.dart
 import 'dart:convert';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 
 void main() {
-  final engine = QuantumCryptoEngine();
+  final engine = PostQuantumCryptoEngine();
 
   // --- Encryption (ML-KEM-768 + HPKE + AES-256-GCM) -------------------------
   final alice = engine.generateEncryptionKeyPair();

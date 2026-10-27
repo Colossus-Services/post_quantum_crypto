@@ -254,7 +254,7 @@ T parseStrict<T>(T Function() parse) {
     return parse();
   } on InsufficientDataError {
     throw const MalformedDataException('Truncated data');
-  } on QuantumCryptoException {
+  } on PostQuantumCryptoException {
     rethrow;
   } on FormatException {
     throw const MalformedDataException('Invalid encoding');

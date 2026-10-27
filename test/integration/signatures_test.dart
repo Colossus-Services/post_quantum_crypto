@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -186,7 +186,7 @@ void main() {
               publicKey: signer.publicKey,
             );
           },
-          throwsA(isA<QuantumCryptoException>()),
+          throwsA(isA<PostQuantumCryptoException>()),
           reason: 'byte $i',
         );
       }

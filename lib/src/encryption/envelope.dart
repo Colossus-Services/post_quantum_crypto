@@ -4,7 +4,7 @@
 /// Layout (all integers big-endian; see doc/FORMATS.md):
 ///
 /// ```text
-/// "QCRY" u8 version=1 u8 type=0x01
+/// "PQCR" u8 version=1 u8 type=0x01
 /// u16 kdfId          (0x0002 = HKDF-SHA-384)
 /// u16 aeadId         (0x0002 = AES-256-GCM, 0x0003 = ChaCha20-Poly1305)
 /// context            canonical map (authenticated, not secret)

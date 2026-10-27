@@ -12,7 +12,7 @@ import '../random/secure_random.dart';
 import '../signatures/signed_objects.dart';
 
 /// File helpers (Dart VM / Flutter native only).
-extension QuantumCryptoFiles on QuantumCryptoEngine {
+extension PostQuantumCryptoFiles on PostQuantumCryptoEngine {
   /// Encrypts [inputPath] into [outputPath] with bounded memory.
   ///
   /// Output is written to a temporary file in the destination directory and

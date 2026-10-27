@@ -32,7 +32,7 @@ import 'signatures/signed_objects.dart';
 /// and Argon2id take from microseconds to seconds depending on the platform
 /// and parameters. In UI isolates, call them through `runInBackground` (an
 /// `Isolate.run` on native platforms).
-final class QuantumCryptoEngine {
+final class PostQuantumCryptoEngine {
   @internal
   final CryptoContext ctx;
 
@@ -49,14 +49,14 @@ final class QuantumCryptoEngine {
   ///
   /// Randomness always comes from the platform CSPRNG
   /// ([SystemSecureRandom]); there is no public way to select another source.
-  factory QuantumCryptoEngine({
+  factory PostQuantumCryptoEngine({
     CryptoBackend backend = standardCryptoBackend,
     SecurityPolicy policy = SecurityPolicy.standard,
-  }) => QuantumCryptoEngine._(
+  }) => PostQuantumCryptoEngine._(
     CryptoContext(backend, policy, SystemSecureRandom.instance),
   );
 
-  QuantumCryptoEngine._(this.ctx) : _keys = KeyFactory(ctx) {
+  PostQuantumCryptoEngine._(this.ctx) : _keys = KeyFactory(ctx) {
     _codec = KeyCodec(_keys);
     _password = PasswordProtection(ctx);
     _envelopes = EnvelopeService(ctx);
@@ -68,19 +68,19 @@ final class QuantumCryptoEngine {
   /// Internal constructor used by tests to inject a deterministic source.
   @internal
   @visibleForTesting
-  factory QuantumCryptoEngine.withRandomSourceForTesting(
+  factory PostQuantumCryptoEngine.withRandomSourceForTesting(
     SecureRandomSource random, {
     CryptoBackend backend = standardCryptoBackend,
     SecurityPolicy policy = SecurityPolicy.standard,
-  }) => QuantumCryptoEngine._(CryptoContext(backend, policy, random));
+  }) => PostQuantumCryptoEngine._(CryptoContext(backend, policy, random));
 
   CryptoBackend get backend => ctx.backend;
 
   SecurityPolicy get policy => ctx.policy;
 
   /// Returns an engine with the same backend and a different [policy].
-  QuantumCryptoEngine withPolicy(SecurityPolicy policy) =>
-      QuantumCryptoEngine._(CryptoContext(backend, policy, ctx.random));
+  PostQuantumCryptoEngine withPolicy(SecurityPolicy policy) =>
+      PostQuantumCryptoEngine._(CryptoContext(backend, policy, ctx.random));
 
   // ---------------------------------------------------------------------------
   // Keys
@@ -321,7 +321,7 @@ final class QuantumCryptoEngine {
   /// **Release semantics:** every emitted chunk has been authenticated in its
   /// position, but truncation of the whole stream is only detected at its
   /// end. Plaintext emitted before an error must be treated as unverified and
-  /// discarded. For files, `decryptFile` in `quantum_crypto_io.dart` writes
+  /// discarded. For files, `decryptFile` in `post_quantum_crypto_io.dart` writes
   /// to a temporary file and publishes it only after full verification.
   Stream<Uint8List> decryptStream(
     Stream<List<int>> input, {
@@ -370,14 +370,14 @@ final class QuantumCryptoEngine {
   // Key serialization
   // ---------------------------------------------------------------------------
 
-  /// Serializes any key as a package-specific `QCRY` key record, including
+  /// Serializes any key as a package-specific `PQCR` key record, including
   /// its [KeyMetadata]. Private keys are written in seed form when available.
   ///
   /// The result contains **unencrypted private key material** for private
   /// keys; prefer [exportPrivateKeyWithPassword] for storage or backup.
   Uint8List encodeKey(QuantumKey key) => _codec.encodeRecord(key);
 
-  /// Parses a `QCRY` key record. Private keys are re-derived and must match
+  /// Parses a `PQCR` key record. Private keys are re-derived and must match
   /// the stored public key.
   QuantumKey decodeKey(List<int> bytes) =>
       _codec.decodeRecord(Uint8List.fromList(bytes));
@@ -675,7 +675,7 @@ final class QuantumCryptoEngine {
       SignedManifest.parse(ctx, Uint8List.fromList(bytes));
 
   /// Verifies the manifest signature. Check each file against its entry
-  /// separately (`verifyManifestFiles` in `quantum_crypto_io.dart`, or
+  /// separately (`verifyManifestFiles` in `post_quantum_crypto_io.dart`, or
   /// [manifestEntry] for in-memory content).
   VerifiedSignature verifyManifest(
     SignedManifest manifest, {

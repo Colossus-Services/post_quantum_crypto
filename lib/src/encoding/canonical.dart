@@ -4,8 +4,8 @@ import 'dart:typed_data';
 import '../errors.dart';
 import 'bytes.dart';
 
-/// Magic bytes that open every serialized object: ASCII `QCRY`.
-const List<int> formatMagic = [0x51, 0x43, 0x52, 0x59];
+/// Magic bytes that open every serialized object: ASCII `PQCR`.
+const List<int> formatMagic = [0x50, 0x51, 0x43, 0x52];
 
 /// The only format version this release writes and reads.
 const int formatVersion = 1;
@@ -23,7 +23,7 @@ abstract final class ObjectType {
   static const int hybridKeyMessage = 0x0a;
 }
 
-/// Writes the common header `QCRY || version || type`.
+/// Writes the common header `PQCR || version || type`.
 void writeHeader(ByteWriter w, int type) {
   w
     ..raw(formatMagic)
@@ -38,7 +38,7 @@ void writeHeader(ByteWriter w, int type) {
 void readHeader(ByteReader r, int expectedType) {
   final magic = r.fixed(4);
   if (!constantTimeEquals(magic, formatMagic)) {
-    throw const MalformedDataException('Not a quantum_crypto object');
+    throw const MalformedDataException('Not a post_quantum_crypto object');
   }
   final version = r.u8();
   if (version != formatVersion) {

@@ -10,9 +10,9 @@
 /// - **Keys**: seed-form keys, fingerprints, metadata, SPKI/PKCS#8 DER,
 ///   Argon2id-protected exports, key stores.
 ///
-/// Start with [QuantumCrypto] for defaults, or create a
-/// [QuantumCryptoEngine] with a custom [SecurityPolicy] or [CryptoBackend].
-/// File helpers live in `package:quantum_crypto/quantum_crypto_io.dart`.
+/// Start with [PostQuantumCrypto] for defaults, or create a
+/// [PostQuantumCryptoEngine] with a custom [SecurityPolicy] or [CryptoBackend].
+/// File helpers live in `package:post_quantum_crypto/post_quantum_crypto_io.dart`.
 library;
 
 export 'src/algorithms/algorithms.dart';
@@ -37,7 +37,7 @@ export 'src/keys/password_protection.dart' show Argon2idParameters;
 export 'src/policy.dart';
 export 'src/providers/default_backend.dart';
 export 'src/providers/primitives.dart';
-export 'src/quantum_crypto_facade.dart';
+export 'src/post_quantum_crypto_facade.dart';
 export 'src/random/secure_random.dart'
     show SecureRandomSource, SystemSecureRandom;
 export 'src/signatures/signed_objects.dart'

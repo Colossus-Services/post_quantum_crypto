@@ -49,7 +49,9 @@ final class CryptoContext {
     maxValueBytes: policy.limits.maxContextValueBytes,
   );
 
-  static final Uint8List _keyIdLabel = utf8Bytes('quantum_crypto/v1/key-id');
+  static final Uint8List _keyIdLabel = utf8Bytes(
+    'post_quantum_crypto/v1/key-id',
+  );
 
   KeyId keyId(int kind, int algorithmId, List<int> publicKey) {
     final w = ByteWriter()
