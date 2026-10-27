@@ -1,10 +1,9 @@
 name: post_quantum_crypto
 description: >-
-  High-level post-quantum cryptography for Dart: ML-KEM envelopes,
-  multi-recipient and streaming encryption, ML-DSA signatures, X-Wing hybrid
-  key establishment, Argon2id-protected keys and key management. Pure Dart,
-  built on pqcrypto and PointyCastle behind swappable provider interfaces.
-version: 2.0.0
+  Pure Dart post-quantum cryptography: ML-KEM envelopes and streaming
+  encryption, ML-DSA and SLH-DSA signatures, X-Wing hybrid key exchange,
+  Argon2id key protection.
+version: 2.0.1
 repository: https://github.com/Colossus-Services/post_quantum_crypto
 issue_tracker: https://github.com/Colossus-Services/post_quantum_crypto/issues
 

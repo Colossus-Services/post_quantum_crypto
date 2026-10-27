@@ -1,3 +1,8 @@
+## 2.0.1
+
+- Shorter pubspec `description` (163 characters): pub.dev requires 60–180
+  and scored the package 0/10 for "Provide a valid pubspec.yaml".
+
 ## 2.0.0
 
 ### Breaking
