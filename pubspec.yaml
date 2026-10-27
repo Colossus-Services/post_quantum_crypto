@@ -4,7 +4,7 @@ description: >-
   multi-recipient and streaming encryption, ML-DSA signatures, X-Wing hybrid
   key establishment, Argon2id-protected keys and key management. Pure Dart,
   built on pqcrypto and PointyCastle behind swappable provider interfaces.
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/Colossus-Services/post_quantum_crypto
 issue_tracker: https://github.com/Colossus-Services/post_quantum_crypto/issues
 

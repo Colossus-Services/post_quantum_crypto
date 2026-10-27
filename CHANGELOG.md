@@ -1,3 +1,15 @@
+## 1.0.1
+
+### CI
+
+- Coverage is uploaded to Codecov (`codecov/codecov-action@v7`); README
+  shows the Codecov badge. `actions/checkout` upgraded to v7.
+
+### Tests
+
+- Added `test/unit/version_test.dart`, pinning `postQuantumCryptoVersion`
+  to `pubspec.yaml` (it was referenced but missing).
+
 ## 1.0.0
 
 Initial release.

@@ -3,6 +3,7 @@
 [![pub package](https://img.shields.io/pub/v/post_quantum_crypto.svg?logo=dart&logoColor=00b9fc)](https://pub.dev/packages/post_quantum_crypto)
 [![Null Safety](https://img.shields.io/badge/null-safety-brightgreen)](https://dart.dev/null-safety)
 [![Dart CI](https://github.com/Colossus-Services/post_quantum_crypto/actions/workflows/dart.yml/badge.svg?branch=main)](https://github.com/Colossus-Services/post_quantum_crypto/actions/workflows/dart.yml)
+[![codecov](https://codecov.io/gh/Colossus-Services/post_quantum_crypto/branch/main/graph/badge.svg)](https://codecov.io/gh/Colossus-Services/post_quantum_crypto)
 [![GitHub Tag](https://img.shields.io/github/v/tag/Colossus-Services/post_quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/post_quantum_crypto/releases)
 [![Last Commits](https://img.shields.io/github/last-commit/Colossus-Services/post_quantum_crypto?logo=git&logoColor=white)](https://github.com/Colossus-Services/post_quantum_crypto/commits/main)
 [![License](https://img.shields.io/github/license/Colossus-Services/post_quantum_crypto?logo=open-source-initiative&logoColor=green)](https://github.com/Colossus-Services/post_quantum_crypto/blob/main/LICENSE)
