@@ -1,7 +1,19 @@
 ## 2.0.1
 
-- Shorter pubspec `description` (163 characters): pub.dev requires 60–180
-  and scored the package 0/10 for "Provide a valid pubspec.yaml".
+### Fixed
+
+- **Key labels and revocation reasons are checked where they are
+  introduced.** Before, a label over 4096 UTF-8 bytes (or with an unpaired
+  surrogate) was only rejected when the key was saved. Now key generation,
+  import, `withMetadata` and `KeyMetadata.copyWith` reject it. The new
+  `KeyMetadata.checkLimits` does the same check on demand.
+- **`KeyStore.backup` skips a mismatched entry** (an entry holding a
+  different key than its name, or invalid key material) instead of failing
+  the whole backup, and reports it to the new optional `onSkipped` callback.
+  A wrong store password or a malformed entry still fails the backup.
+- **pub.dev:** shorter pubspec `description` (163 characters). pub.dev
+  requires 60–180 and scored the package 0/10 for "Provide a valid
+  pubspec.yaml".
 
 ## 2.0.0
 

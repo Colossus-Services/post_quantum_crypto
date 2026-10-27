@@ -45,7 +45,9 @@ final class EncryptionPublicKey implements QuantumKey {
     required List<int> bytes,
     required this.keyId,
     this.metadata = const KeyMetadata(),
-  }) : bytes = immutableCopy(bytes);
+  }) : bytes = immutableCopy(bytes) {
+    metadata.checkLimits();
+  }
 
   /// Returns a copy carrying [metadata].
   EncryptionPublicKey withMetadata(KeyMetadata metadata) =>
@@ -181,7 +183,9 @@ final class SigningPublicKey implements QuantumKey {
     required List<int> bytes,
     required this.keyId,
     this.metadata = const KeyMetadata(),
-  }) : bytes = immutableCopy(bytes);
+  }) : bytes = immutableCopy(bytes) {
+    metadata.checkLimits();
+  }
 
   SigningPublicKey withMetadata(KeyMetadata metadata) =>
       SigningPublicKey.internal(

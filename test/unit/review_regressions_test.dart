@@ -9,6 +9,7 @@ import 'package:post_quantum_crypto/src/encoding/der.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
+import 'key_serialization_test.dart' show fastArgon;
 
 /// RFC 5958 OneAsymmetricKey tags: `[1] IMPLICIT BIT STRING` publicKey and
 /// `[0]` attributes (spelled out so the test does not depend on lib).
@@ -172,6 +173,52 @@ void main() {
           throwsA(isA<InvalidKeyException>()),
         );
       }
+    });
+
+    test('backup skips a mismatched entry and keeps the rest', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateEncryptionKeyPair();
+      final b = engine.generateEncryptionKeyPair();
+      await store.putPair(a);
+      await store.putPair(b);
+      // B's public record copied over A's.
+      await storage.write(
+        '${a.keyId.hex}.pub',
+        (await storage.read('${b.keyId.hex}.pub'))!,
+      );
+      final skipped = <(KeyId, bool)>[];
+      final backup = await store.backup(
+        'backup passphrase',
+        parameters: fastArgon,
+        onSkipped: (id, private, _) => skipped.add((id, private)),
+      );
+      expect(skipped, [(a.keyId, false)]);
+
+      final restored = KeyStore(engine, InMemoryKeyStorage());
+      await restored.restore(backup, 'backup passphrase');
+      // A's private half and both halves of B made it into the backup.
+      expect((await restored.get(a.keyId, private: true))!.keyId, a.keyId);
+      expect(await restored.get(b.keyId), b.publicKey);
+      expect((await restored.get(b.keyId, private: true))!.keyId, b.keyId);
+    });
+
+    test('backup still fails on a wrong store password', () async {
+      final storage = InMemoryKeyStorage();
+      await KeyStore(
+        engine,
+        storage,
+        password: 'store passphrase one',
+        parameters: fastArgon,
+      ).putPair(engine.generateEncryptionKeyPair());
+      await expectLater(
+        KeyStore(
+          engine,
+          storage,
+          password: 'store passphrase two',
+        ).backup('backup passphrase', parameters: fastArgon),
+        throwsA(isA<DecryptionFailedException>()),
+      );
     });
 
     test('a private record in a public entry is rejected', () async {
@@ -421,13 +468,36 @@ void main() {
 
     test('over-long key labels and revocation reasons', () async {
       final long = 'x' * 4097;
+      // Rejected where the label is introduced, not when the key is saved.
       expect(
-        () => engine.encodeKey(
-          engine
-              .generateSigningKeyPair(metadata: KeyMetadata(label: long))
-              .publicKey,
+        () => engine.generateSigningKeyPair(metadata: KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => engine.generateEncryptionKeyPair(
+          metadata: KeyMetadata(label: long),
         ),
         throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => const KeyMetadata().copyWith(revocationReason: long),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      final plain = engine.generateEncryptionKeyPair();
+      expect(
+        () => plain.publicKey.withMetadata(KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => plain.privateKey.withMetadata(KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => engine.importEncryptionPublicKey(
+          plain.publicKey.bytes,
+          metadata: KeyMetadata(label: 'x\uD800'),
+        ),
+        throwsA(isA<InvalidInputException>()),
       );
       final ok = engine.generateSigningKeyPair(
         metadata: KeyMetadata(label: 'x' * 4096),

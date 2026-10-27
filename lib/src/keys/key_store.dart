@@ -245,14 +245,27 @@ final class KeyStore {
   static const _backupContext = {'type': 'post_quantum_crypto/key-backup'};
 
   /// Exports every stored key into one Argon2id-encrypted backup.
+  ///
+  /// An entry rejected with [InvalidKeyException] (it holds a different key
+  /// than its name says, see [get], or invalid key material) is left out and
+  /// reported to [onSkipped] if given, so one misplaced file does not prevent
+  /// backing up the rest. Any other error (a wrong store password, a
+  /// malformed entry, a storage failure) still fails the backup.
   Future<Uint8List> backup(
     String backupPassword, {
     Argon2idParameters? parameters,
+    void Function(KeyId id, bool private, InvalidKeyException error)? onSkipped,
   }) async {
     final records = <Uint8List>[];
     for (final id in await list()) {
       for (final private in [false, true]) {
-        final k = await get(id, private: private);
+        final QuantumKey? k;
+        try {
+          k = await get(id, private: private);
+        } on InvalidKeyException catch (e) {
+          onSkipped?.call(id, private, e);
+          continue;
+        }
         if (k != null) records.add(engine.encodeKey(k));
       }
     }
