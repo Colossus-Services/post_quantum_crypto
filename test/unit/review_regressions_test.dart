@@ -253,6 +253,8 @@ void main() {
         final entries = dir.listSync().map((e) => e.uri.pathSegments.last);
         expect(entries, [name]);
         expect(await s.list(), [name]);
+        // Writes through one instance are applied in order.
+        expect(await s.read(name), [7]);
         if (!Platform.isWindows) {
           expect(
             File('${dir.path}/$name').statSync().modeString(),

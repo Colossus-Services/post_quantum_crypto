@@ -153,8 +153,10 @@ extension QuantumCryptoFiles on QuantumCryptoEngine {
 ///
 /// Files are restricted to owner-only permissions on POSIX systems
 /// (`chmod 600`, applied before any key bytes are written). Temporary
-/// files are named `<key>.<random>.tmp` and are not listed as keys. This is
-/// ordinary file storage: it is not
+/// files are named `<key>.<random>.tmp` and are not listed as keys. Writes
+/// through one instance are serialized per key; concurrent writers in
+/// different processes are not coordinated (on Windows the losing rename
+/// fails). This is ordinary file storage: it is not
 /// hardware-backed and offers no protection against other code running as
 /// the same user. Combine it with a [KeyStore] password for private keys.
 final class FileKeyStorage implements KeyStorage {
@@ -177,8 +179,25 @@ final class FileKeyStorage implements KeyStorage {
     return await f.exists() ? await f.readAsBytes() : null;
   }
 
+  /// Pending write per key name. Writes of one name are serialized: on
+  /// Windows, renaming onto a file that another rename is replacing fails
+  /// with "access denied" (POSIX rename replaces atomically).
+  final Map<String, Future<void>> _pending = {};
+
   @override
-  Future<void> write(String name, Uint8List data) async {
+  Future<void> write(String name, Uint8List data) {
+    _file(name); // validate before queueing
+    final previous = _pending[name] ?? Future<void>.value();
+    final next = previous
+        .catchError((Object _) {})
+        .then((_) => _write(name, data));
+    _pending[name] = next;
+    return next.whenComplete(() {
+      if (identical(_pending[name], next)) _pending.remove(name);
+    });
+  }
+
+  Future<void> _write(String name, Uint8List data) async {
     await directory.create(recursive: true);
     final f = _file(name);
     // A unique temporary name: concurrent writes of the same key cannot
