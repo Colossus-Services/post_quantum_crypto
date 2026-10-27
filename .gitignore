@@ -1,0 +1,17 @@
+# https://dart.dev/tools/pub/private-files
+# Created by `dart pub`
+.dart_tool/
+
+# Avoid committing pubspec.lock for library packages; see
+# https://dart.dev/tools/pub/private-files#pubspec-lock.
+pubspec.lock
+
+# Generated API documentation.
+doc/api/
+
+coverage/
+
+.DS_Store
+
+build/
+tmp/
