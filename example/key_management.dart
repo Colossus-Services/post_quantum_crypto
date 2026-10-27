@@ -90,7 +90,7 @@ Future<void> main() async {
   }
   // ...and a TrustStore holding the updated key re-evaluates the earlier
   // verification as revoked.
-  final trust = TrustStore([revoked]);
+  final trust = engine.createTrustStore([revoked]);
   print('trust decision now: ${trust.evaluate(verified)}');
 
   // --- Policies ----------------------------------------------------------------

@@ -124,7 +124,10 @@ final class PasswordProtection {
   }
 
   void _checkPassword(String password) {
-    if (utf8Bytes(password).length < _ctx.policy.password.minPasswordBytes) {
+    final pw = utf8Bytes(password);
+    final length = pw.length;
+    zeroize(pw);
+    if (length < _ctx.policy.password.minPasswordBytes) {
       throw const InvalidInputException('Password is too short');
     }
   }

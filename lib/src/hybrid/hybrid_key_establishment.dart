@@ -111,19 +111,19 @@ final class HybridKeyService {
     KeyId responder,
     Uint8List enc,
     Uint8List ss,
-    HybridTranscript transcript,
+    Uint8List transcriptHash,
     int length,
   ) {
-    final kdf = _ctx.hkdfSha384;
-    final prk = kdf.extract(null, ss);
     final info =
         (ByteWriter()
               ..raw(_label)
               ..u16(kem.id)
               ..raw(responder.bytes)
               ..raw(_ctx.sha384(enc))
-              ..raw(_ctx.sha384(transcript.encode(_ctx))))
+              ..raw(transcriptHash))
             .toBytes();
+    final kdf = _ctx.hkdfSha384;
+    final prk = kdf.extract(null, ss);
     try {
       return kdf.expand(prk, info, length);
     } finally {
@@ -139,6 +139,8 @@ final class HybridKeyService {
     _checkHybrid(responder.algorithm);
     _checkLength(length);
     _ctx.policy.checkKeyMetadata(responder.metadata, KeyUsage.encrypt);
+    // Validate the transcript before any secret exists.
+    final transcriptHash = _ctx.sha384(transcript.encode(_ctx));
     final kem = responder.algorithm;
     final rnd = _ctx.randomBytes(kem.encapsulationRandomLength);
     final encap = _ctx.kem(kem).encapsulate(responder.bytes, rnd);
@@ -149,7 +151,7 @@ final class HybridKeyService {
         responder.keyId,
         encap.ciphertext,
         encap.sharedSecret,
-        transcript,
+        transcriptHash,
         length,
       );
       final w = ByteWriter();
@@ -185,9 +187,10 @@ final class HybridKeyService {
       throw const KeyNotFoundException('Message is not for this key');
     }
     _ctx.policy.checkKeyMetadata(responder.metadata, KeyUsage.decrypt);
+    final transcriptHash = _ctx.sha384(transcript.encode(_ctx));
     final ss = _ctx.kem(kem).decapsulate(responder.secret, enc);
     try {
-      return _derive(kem, keyId, enc, ss, transcript, length);
+      return _derive(kem, keyId, enc, ss, transcriptHash, length);
     } finally {
       zeroize(ss);
     }

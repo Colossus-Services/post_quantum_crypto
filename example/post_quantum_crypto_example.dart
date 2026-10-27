@@ -42,7 +42,7 @@ void main() {
   print('signature valid: $valid (${signature.length} bytes)');
 
   // A valid signature is not the same as a trusted signer.
-  final trust = TrustStore([signer.publicKey]);
+  final trust = engine.createTrustStore([signer.publicKey]);
   final detached = engine.signDetached(
     message,
     privateKey: signer.privateKey,

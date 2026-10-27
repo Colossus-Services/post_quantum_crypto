@@ -291,10 +291,11 @@ How a future format version is introduced:
    parsed.
 4. A release that wants to keep reading the previous version adds it to
    `legacyFormatVersions` and gives each affected parser a branch on the
-   version returned by `readHeader`. Legacy objects are read only: rewrap,
-   password change and stream re-encryption write the current version, which
-   is the migration path. A release may also drop a version entirely, as 2.0
-   did for version 1.
+   version returned by `readObjectHeader`. Legacy objects are read only;
+   the migration path is to write them again in the current version
+   (`rewrapEnvelope`, `changeKeyPassword`, or `decryptStream` piped into
+   `encryptStream`). A release may also drop a version entirely, as 2.0 did
+   for version 1.
 5. Each version has its own published vectors
    (`test/vectors/post_quantum_crypto_v<N>.json`); a version that is still
    readable keeps its file and a test that reads it.

@@ -23,10 +23,9 @@
 - `EncryptedEnvelope.formatVersion` and `StreamHeader.formatVersion`.
 - `TrustStore.withClock` and `PostQuantumCryptoEngine.createTrustStore`,
   whose `evaluate` judges expiry by the engine's policy clock.
-- "Format evolution" rules in doc/FORMATS.md. `readHeader` returns the
-  version it read, and `legacyFormatVersions` together with
-  `SecurityPolicy.acceptLegacyFormats` let a future version keep reading
-  this one behind an opt-in.
+- "Format evolution" rules in doc/FORMATS.md. Every parser checks the
+  format version in one place, so a future format version can keep reading
+  this one behind `SecurityPolicy.acceptLegacyFormats`.
 
 ### Tests
 

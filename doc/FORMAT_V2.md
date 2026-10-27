@@ -1,8 +1,8 @@
 # Wire format 2: key commitment (2.0.0)
 
-Status: **implemented** on the `format-v2` branch. The normative
-specification is [FORMATS.md](FORMATS.md); this page records why format 2
-exists and the decisions behind it.
+Status: **released in 2.0.0**. The normative specification is
+[FORMATS.md](FORMATS.md); this page records why format 2 exists and the
+decisions behind it.
 
 ## Problem
 

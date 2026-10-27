@@ -40,10 +40,11 @@ final class CommittedKey {
     int keyLength,
   ) {
     final kdf = ctx.hkdfSha384;
-    final prk = kdf.extract(
-      utf8Bytes('post_quantum_crypto/v2/$purpose'),
-      secret,
+    final salt = _salts.putIfAbsent(
+      purpose,
+      () => utf8Bytes('post_quantum_crypto/v2/$purpose'),
     );
+    final prk = kdf.extract(salt, secret);
     try {
       return CommittedKey._(
         kdf.expand(prk, concatBytes([_keyLabel, h0]), keyLength),
@@ -54,6 +55,8 @@ final class CommittedKey {
     }
   }
 
+  /// HKDF salts per purpose (a fixed, small set).
+  static final Map<String, Uint8List> _salts = {};
   static final Uint8List _keyLabel = utf8Bytes('payload-key');
   static final Uint8List _commitmentLabel = utf8Bytes('commitment');
 

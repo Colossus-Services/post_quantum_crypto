@@ -343,6 +343,37 @@ void main() {
       }
     });
 
+    test('an invalid hybrid transcript fails before key establishment', () {
+      final responder = engine.generateEncryptionKeyPair(
+        algorithm: KemAlgorithm.xWing,
+      );
+      const bad = HybridTranscript(
+        protocol: 'p',
+        initiatorId: 'user\uD800',
+        responderId: 'server',
+      );
+      expect(
+        () => engine.establishHybridKey(responder.publicKey, transcript: bad),
+        throwsA(isA<InvalidInputException>()),
+      );
+      final ok = engine.establishHybridKey(
+        responder.publicKey,
+        transcript: const HybridTranscript(
+          protocol: 'p',
+          initiatorId: 'user',
+          responderId: 'server',
+        ),
+      );
+      expect(
+        () => engine.acceptHybridKey(
+          ok.message,
+          privateKey: responder.privateKey,
+          transcript: bad,
+        ),
+        throwsA(isA<InvalidInputException>()),
+      );
+    });
+
     test('unpaired surrogates in passwords', () {
       // 'pass\uD800word' and 'pass\uDC00word' must not be the same password.
       expect(
