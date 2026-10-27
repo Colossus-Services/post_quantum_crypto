@@ -200,7 +200,7 @@ abstract interface class PostQuantumProvider {
   SignaturePrimitive signature(SignatureAlgorithm algorithm);
 }
 
-/// The set of primitive implementations used by a `QuantumCryptoEngine`.
+/// The set of primitive implementations used by a `PostQuantumCryptoEngine`.
 ///
 /// `standardCryptoBackend` is the pure-Dart default (pqcrypto, PointyCastle,
 /// package:cryptography). A custom backend, for example a native or

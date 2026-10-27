@@ -1,10 +1,10 @@
 @Tags(['vectors'])
 library;
 
-import 'package:quantum_crypto/src/algorithms/algorithms.dart';
-import 'package:quantum_crypto/src/hpke/hpke.dart';
-import 'package:quantum_crypto/src/kem/kem_scheme.dart';
-import 'package:quantum_crypto/src/providers/default_backend.dart';
+import 'package:post_quantum_crypto/src/algorithms/algorithms.dart';
+import 'package:post_quantum_crypto/src/hpke/hpke.dart';
+import 'package:post_quantum_crypto/src/kem/kem_scheme.dart';
+import 'package:post_quantum_crypto/src/providers/default_backend.dart';
 import 'package:test/test.dart';
 
 import '../support/vectors.dart';

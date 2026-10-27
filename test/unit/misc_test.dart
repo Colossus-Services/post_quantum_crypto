@@ -1,26 +1,29 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
 
 void main() {
   test('facade round trip', () {
-    final enc = QuantumCrypto.generateEncryptionKeyPair();
-    final env = QuantumCrypto.encrypt(
+    final enc = PostQuantumCrypto.generateEncryptionKeyPair();
+    final env = PostQuantumCrypto.encrypt(
       bytesOf('hello'),
       recipients: [enc.publicKey],
     );
     expect(
-      QuantumCrypto.decrypt(env, privateKey: enc.privateKey),
+      PostQuantumCrypto.decrypt(env, privateKey: enc.privateKey),
       bytesOf('hello'),
     );
-    final sig = QuantumCrypto.generateSigningKeyPair();
-    final s = QuantumCrypto.sign(bytesOf('hello'), privateKey: sig.privateKey);
+    final sig = PostQuantumCrypto.generateSigningKeyPair();
+    final s = PostQuantumCrypto.sign(
+      bytesOf('hello'),
+      privateKey: sig.privateKey,
+    );
     expect(
-      QuantumCrypto.verify(
+      PostQuantumCrypto.verify(
         bytesOf('hello'),
         signature: s,
         publicKey: sig.publicKey,
@@ -117,6 +120,6 @@ void main() {
       r'^version:\s*(\S+)',
       multiLine: true,
     ).firstMatch(pubspec)!.group(1);
-    expect(quantumCryptoVersion, version);
+    expect(postQuantumCryptoVersion, version);
   }, tags: ['version']);
 }

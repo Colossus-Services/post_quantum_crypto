@@ -1,4 +1,4 @@
-# quantum_crypto wire formats (version 1)
+# post_quantum_crypto wire formats (version 1)
 
 All objects are **binary**; that is the canonical representation. Hex and
 Base64URL (`TextEncoding`) are lossless wrappers for textual transport.
@@ -22,7 +22,7 @@ Conventions:
 ## Common header
 
 ```text
-"QCRY" (51 43 52 59) | u8 version = 0x01 | u8 objectType
+"PQCR" (50 51 43 52) | u8 version = 0x01 | u8 objectType
 ```
 
 | Type | Object |
@@ -55,7 +55,7 @@ Signature identifiers are package-specific: ML-DSA-44/65/87 =
 ## Key identifier
 
 ```text
-KeyId = SHA-256("quantum_crypto/v1/key-id" || 0x00 || kind || u16 alg || publicKey)
+KeyId = SHA-256("post_quantum_crypto/v1/key-id" || 0x00 || kind || u16 alg || publicKey)
 kind = 0x01 encryption, 0x02 signing
 ```
 
@@ -71,7 +71,7 @@ with suite (kemId, HKDF-SHA-384, aeadId):
 ```text
 (enc, ss) = KEM.Encap(pkR)                       ML-KEM-768 per draft-ietf-hpke-pq
 ctx       = KeySchedule(mode_base, ss, info)
-info      = "quantum_crypto/v1/<purpose>/wrap" || u16 kemId || keyId
+info      = "post_quantum_crypto/v1/<purpose>/wrap" || u16 kemId || keyId
             purpose ∈ {envelope, stream}
 wrapped   = ctx.Seal(aad = headerHash, DEK)
 ```
@@ -118,7 +118,7 @@ chunk_0 || chunk_1 || … || chunk_n               no framing
 
 ```text
 streamKey = HKDF-Expand(HKDF-Extract(salt, DEK),
-                        "quantum_crypto/v1/stream/key" || headerHash, Nk)
+                        "post_quantum_crypto/v1/stream/key" || headerHash, Nk)
 nonce_i   = noncePrefix || u32 i || u8 final      (final = 1 only for chunk_n)
 chunk_i   = AEAD(streamKey, nonce_i, plaintext_i, aad = headerHash)
 ```
@@ -136,7 +136,7 @@ header
 u16 sigAlg | 32 signerKeyId | bytes8 context (≤ 255)
 canonical map  metadata
 u8 digestAlg (0x02 = SHA-384) | 48 digest | u64 contentLength
-    signedBytes = "quantum_crypto/v1/detached-signature\0" || all bytes so far
+    signedBytes = "post_quantum_crypto/v1/detached-signature\0" || all bytes so far
 bytes32 signature            = ML-DSA/SLH-DSA.Sign(sk, signedBytes, ctx = context)
 ```
 
@@ -153,7 +153,7 @@ header
 u16 sigAlg | 32 signerKeyId | bytes8 context | canonical map metadata
 u8 digestAlg (0x02) | u32 entryCount
 entries, strictly ascending by UTF-8 path: bytes16 path | u64 size | 48 sha384
-    signedBytes = "quantum_crypto/v1/manifest\0" || all bytes so far
+    signedBytes = "post_quantum_crypto/v1/manifest\0" || all bytes so far
 bytes32 signature
 ```
 
@@ -204,7 +204,7 @@ For 0x08 the payload is a key record. Argon2id parameters are checked against
 ```text
 header | u16 kemId (must be hybrid: 0x647a) | 32 responderKeyId | enc
 key = HKDF-SHA-384(salt = "", ikm = ss,
-        info = "quantum_crypto/v1/hybrid-key" || u16 kemId || responderKeyId ||
+        info = "post_quantum_crypto/v1/hybrid-key" || u16 kemId || responderKeyId ||
                SHA-384(enc) || SHA-384(transcript), L)
 transcript = bytes16 protocol || bytes16 initiatorId || bytes16 responderId ||
              canonical map extra
@@ -224,7 +224,7 @@ covered by `test/interop/openssl_test.dart`.
 
 ## Published test vectors
 
-[`test/vectors/quantum_crypto_v1.json`](../test/vectors/quantum_crypto_v1.json)
+[`test/vectors/post_quantum_crypto_v1.json`](../test/vectors/post_quantum_crypto_v1.json)
 contains, for the formats above, deterministic example objects together with
 the key seeds needed to open them: an envelope with ML-KEM-768 and X-Wing
 recipients, a ChaCha20-Poly1305 envelope, a stream with 256-byte chunks, raw

@@ -6,7 +6,7 @@
 /// ```text
 /// ss  = X-Wing.Encaps / Decaps   (SHA3-256 combiner of both shared secrets)
 /// key = HKDF-SHA-384(salt = "", ikm = ss,
-///         info = "quantum_crypto/v1/hybrid-key" || u16 kemId ||
+///         info = "post_quantum_crypto/v1/hybrid-key" || u16 kemId ||
 ///                responderKeyId || SHA-384(enc) || SHA-384(transcript), L)
 /// ```
 ///
@@ -86,7 +86,9 @@ final class HybridKeyService {
 
   HybridKeyService(this._ctx);
 
-  static final Uint8List _label = utf8Bytes('quantum_crypto/v1/hybrid-key');
+  static final Uint8List _label = utf8Bytes(
+    'post_quantum_crypto/v1/hybrid-key',
+  );
 
   void _checkHybrid(KemAlgorithm kem) {
     // Downgrade protection: this API only ever runs a hybrid KEM.

@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto_io.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';

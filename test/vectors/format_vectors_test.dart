@@ -1,11 +1,11 @@
-/// Published quantum_crypto v1 format vectors
-/// (`test/vectors/quantum_crypto_v1.json`).
+/// Published post_quantum_crypto v1 format vectors
+/// (`test/vectors/post_quantum_crypto_v1.json`).
 @Tags(['vectors'])
 library;
 
 import 'dart:convert';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -13,7 +13,7 @@ import '../support/vectors.dart';
 import 'format_vectors.dart';
 
 void main() {
-  final v = loadVectors('quantum_crypto_v1.json') as Map<String, dynamic>;
+  final v = loadVectors('post_quantum_crypto_v1.json') as Map<String, dynamic>;
   final keys = v['keys'] as Map<String, dynamic>;
   Map<String, dynamic> k(String name) => keys[name] as Map<String, dynamic>;
 

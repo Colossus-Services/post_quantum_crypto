@@ -12,8 +12,8 @@ library;
 
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto.dart';
-import 'package:quantum_crypto/src/kem/kem_scheme.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
+import 'package:post_quantum_crypto/src/kem/kem_scheme.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -228,10 +228,10 @@ void main() {
 
 /// SHA-256 of the deterministic outputs, recorded on the Dart VM.
 const _pinned = <String, String>{
-  'encKey': '75430ec9afc064ffc84cdd289b21dfbba57e1030f0900eab3032ce4a04a87bc0',
-  'sigKey': '42aabf03c621036b6b04a655e1aebaf3596f5cf79574ef39e8a150bfe3d7de01',
+  'encKey': '8c756e434d9b99002fb0197c3d526376d5f116c3b7b91e4bdad17a71f2745ead',
+  'sigKey': '8c7121012dcefa3ffb676668eb6ee4868c429bb30d6b2387fcfe383cfced2469',
   'envelope':
-      '17e9ef46aec9611e1d046081e1840992c7b8aa000709031a0936708ee6310e60',
+      '57e9a0bfc5142a73321e18e364e77d5eafd2f1e65fffdad3b333168b9c13f92d',
   'signature':
-      'd8065ea296d1de25819722af02bff06e10c8d9dffe1179ce402d642168b53901',
+      'd69920f4c5af0db0ad7cd7309a412441909e7ccf606e443ed835ac47e4bc7ba0',
 };

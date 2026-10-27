@@ -9,7 +9,7 @@
 /// Layout:
 ///
 /// ```text
-/// "QCRY" u8 version=1 u8 type (0x08 key / 0x09 data)
+/// "PQCR" u8 version=1 u8 type (0x08 key / 0x09 data)
 /// u8  kdf = 0x01 (Argon2id, version 0x13)
 /// u32 memoryKiB | u32 iterations | u8 parallelism
 /// 16  salt

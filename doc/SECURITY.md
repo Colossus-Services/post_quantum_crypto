@@ -90,4 +90,4 @@ both sides agree on the labels they supplied.
 ## Reporting vulnerabilities
 
 Please report security issues privately through GitHub security advisories
-on <https://github.com/Colossus-Services/quantum_crypto/security>.
+on <https://github.com/Colossus-Services/post_quantum_crypto/security>.

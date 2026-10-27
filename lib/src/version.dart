@@ -1,4 +1,4 @@
-/// The version of the `quantum_crypto` package.
+/// The version of the `post_quantum_crypto` package.
 ///
 /// Kept in sync with `pubspec.yaml` (see `test/unit/version_test.dart`).
-const String quantumCryptoVersion = '1.0.0';
+const String postQuantumCryptoVersion = '1.0.0';

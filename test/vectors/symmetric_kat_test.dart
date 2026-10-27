@@ -3,10 +3,10 @@ library;
 
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/src/algorithms/algorithms.dart';
-import 'package:quantum_crypto/src/encoding/text_encoding.dart';
-import 'package:quantum_crypto/src/providers/default_backend.dart';
-import 'package:quantum_crypto/src/providers/primitives.dart';
+import 'package:post_quantum_crypto/src/algorithms/algorithms.dart';
+import 'package:post_quantum_crypto/src/encoding/text_encoding.dart';
+import 'package:post_quantum_crypto/src/providers/default_backend.dart';
+import 'package:post_quantum_crypto/src/providers/primitives.dart';
 import 'package:test/test.dart';
 
 import '../support/vectors.dart';

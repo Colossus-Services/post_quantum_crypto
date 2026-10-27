@@ -4,8 +4,8 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/quantum_crypto_io.dart';
-import 'package:quantum_crypto/src/encoding/der.dart';
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
+import 'package:post_quantum_crypto/src/encoding/der.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -90,7 +90,7 @@ void main() {
         small
             .decryptStream(_pieces(ct, 64 * 1024), privateKey: kp.privateKey)
             .drain<void>(),
-        throwsA(isA<QuantumCryptoException>()),
+        throwsA(isA<PostQuantumCryptoException>()),
       );
     });
   });

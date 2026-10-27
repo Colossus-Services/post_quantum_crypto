@@ -6,6 +6,6 @@ shift  # remove the first argument (API key) from "$@"
 ## dart pub global activate dart_bump
 
 dart_bump . \
-  --extra-file "lib/src/version.dart=quantumCryptoVersion\\s*=\\s*['\"](.*)['\"]" \
+  --extra-file "lib/src/version.dart=postQuantumCryptoVersion\\s*=\\s*['\"](.*)['\"]" \
   --api-key $APIKEY \
   "$@"

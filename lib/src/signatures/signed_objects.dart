@@ -28,9 +28,11 @@ import '../keys/keys.dart';
 import '../providers/primitives.dart';
 
 final Uint8List _detachedDomain = utf8Bytes(
-  'quantum_crypto/v1/detached-signature\u0000',
+  'post_quantum_crypto/v1/detached-signature\u0000',
 );
-final Uint8List _manifestDomain = utf8Bytes('quantum_crypto/v1/manifest\u0000');
+final Uint8List _manifestDomain = utf8Bytes(
+  'post_quantum_crypto/v1/manifest\u0000',
+);
 
 const HashAlgorithm _digestAlgorithm = HashAlgorithm.sha384;
 

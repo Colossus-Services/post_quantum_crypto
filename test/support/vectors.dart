@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:quantum_crypto/src/encoding/text_encoding.dart';
+import 'package:post_quantum_crypto/src/encoding/text_encoding.dart';
 
 /// Loads a JSON vector file from `test/vectors/`.
 dynamic loadVectors(String name) =>

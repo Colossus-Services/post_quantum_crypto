@@ -3,7 +3,7 @@
 ///
 /// For each recipient: `(enc, ss) = KEM.Encap(pkR)`, then an HPKE context is
 /// derived with HKDF-SHA-384 from `ss` and
-/// `info = "quantum_crypto/v1/<purpose>/wrap" || u16 kemId || keyId`, and the
+/// `info = "post_quantum_crypto/v1/<purpose>/wrap" || u16 kemId || keyId`, and the
 /// DEK is sealed with `aad = headerHash`. The KEM shared secret is therefore
 /// never used directly as an AEAD key, the wrapping key is unique per
 /// encapsulation (so its single nonce is never reused), and the wrap is bound
@@ -169,7 +169,7 @@ final class KeyWrapper {
 
   Uint8List _info(KemAlgorithm kem, KeyId keyId) =>
       (ByteWriter()
-            ..raw(utf8Bytes('quantum_crypto/v1/$_purpose/wrap'))
+            ..raw(utf8Bytes('post_quantum_crypto/v1/$_purpose/wrap'))
             ..u16(kem.id)
             ..raw(keyId.bytes))
           .toBytes();
@@ -214,7 +214,7 @@ final class KeyWrapper {
     final Uint8List ss;
     try {
       ss = _ctx.kem(record.kem).decapsulate(secret, record.enc);
-    } on QuantumCryptoException {
+    } on PostQuantumCryptoException {
       return null;
     }
     final hpke = _suite(

@@ -21,7 +21,7 @@ sealed class QuantumKey {
 
 /// A public encryption (KEM) key. Immutable.
 ///
-/// Obtain one from `QuantumCryptoEngine.generateEncryptionKeyPair` or one of
+/// Obtain one from `PostQuantumCryptoEngine.generateEncryptionKeyPair` or one of
 /// the engine's import methods.
 final class EncryptionPublicKey implements QuantumKey {
   @override
