@@ -309,6 +309,11 @@ Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 is the same `DecryptionFailedException`, so errors cannot be used as an
 oracle. Messages never contain key material.
 
+Two kinds of error pass through unchanged: I/O errors from the file APIs
+(`encryptFile`, `decryptFile`, `signFile`, `FileKeyStorage`, …) surface as
+`FileSystemException`, and an error raised by a caller-supplied input
+stream reaches the caller of `encryptStream`/`decryptStream` as is.
+
 ## Architecture: swappable backends
 
 The library depends only on package-owned interfaces (`KemPrimitive`,

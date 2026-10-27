@@ -129,6 +129,65 @@ void main() {
         throwsA(isA<OperationCancelledException>()),
       );
     });
+
+    test('decryption cancellation', () async {
+      final ct = join(await encryptParts(_data(20 * _chunk)));
+      final token = CancellationToken();
+      final s = engine.decryptStream(
+        _slices(ct, _chunk),
+        privateKey: alice.privateKey,
+        cancel: token,
+        onProgress: (n) {
+          if (n >= 3 * _chunk) token.cancel();
+        },
+      );
+      await expectLater(
+        _collect(s),
+        throwsA(isA<OperationCancelledException>()),
+      );
+      expect(token.isCancelled, isTrue);
+
+      // A token cancelled before the input ends stops at end of input too.
+      final early = CancellationToken()..cancel();
+      await expectLater(
+        _collect(
+          engine.decryptStream(
+            const Stream.empty(),
+            privateKey: alice.privateKey,
+            cancel: early,
+          ),
+        ),
+        throwsA(isA<OperationCancelledException>()),
+      );
+    });
+
+    test('header completed only by the end of input', () async {
+      // Small chunks so header and all chunks fit in under twice the first
+      // slice: the header parse is deferred until the input ends, and the
+      // full chunks are then drained at once.
+      const chunk = 256;
+      final pt = _data(2 * chunk + 10);
+      final parts = await engine
+          .encryptStream(
+            Stream.value(pt),
+            recipients: [alice.publicKey],
+            chunkSize: chunk,
+          )
+          .toList();
+      final ct = join(parts);
+      final first = ct.length ~/ 2 + 1;
+      expect(parts.first.length, greaterThan(first));
+      final progress = <int>[];
+      final out = await _collect(
+        engine.decryptStream(
+          Stream.fromIterable([ct.sublist(0, first), ct.sublist(first)]),
+          privateKey: alice.privateKey,
+          onProgress: progress.add,
+        ),
+      );
+      expect(out, pt);
+      expect(progress, [chunk, 2 * chunk, pt.length]);
+    });
   });
 
   group('attacks on the chunk sequence', () {

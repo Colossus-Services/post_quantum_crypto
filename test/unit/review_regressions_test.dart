@@ -1,4 +1,4 @@
-/// Regression tests for the findings of the PR #1 code review.
+/// Regression tests for the findings of the PR #1 and PR #3 code reviews.
 library;
 
 import 'dart:io';
@@ -152,6 +152,39 @@ void main() {
       },
     );
 
+    test('an entry holding another key is rejected', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateEncryptionKeyPair();
+      final b = engine.generateEncryptionKeyPair();
+      await store.putPair(a);
+      await store.putPair(b);
+      // B's files copied over A's.
+      for (final ext in ['key', 'pub']) {
+        await storage.write(
+          '${a.keyId.hex}.$ext',
+          (await storage.read('${b.keyId.hex}.$ext'))!,
+        );
+      }
+      for (final private in [false, true]) {
+        await expectLater(
+          store.get(a.keyId, private: private),
+          throwsA(isA<InvalidKeyException>()),
+        );
+      }
+    });
+
+    test('a private record in a public entry is rejected', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateSigningKeyPair();
+      await storage.write('${a.keyId.hex}.pub', engine.encodeKey(a.privateKey));
+      await expectLater(
+        store.get(a.keyId),
+        throwsA(isA<InvalidKeyException>()),
+      );
+    });
+
     test('non-key storage entries are ignored by list()', () async {
       final storage = InMemoryKeyStorage();
       await storage.write('not-a-key', Uint8List(1));
@@ -264,10 +297,110 @@ void main() {
       },
     );
 
+    test('a delete issued after a write is not undone by it', () async {
+      final s = FileKeyStorage(dir);
+      final name = '${'ef' * 32}.pub';
+      final writes = [
+        for (var i = 0; i < 4; i++) s.write(name, Uint8List.fromList([i])),
+      ];
+      final deleted = s.delete(name);
+      await Future.wait([...writes, deleted]);
+      expect(await s.read(name), isNull);
+      expect(dir.listSync(), isEmpty);
+    });
+
     test('stray files are not listed as keys', () async {
       File('${dir.path}/notes.txt').writeAsStringSync('x');
       File('${dir.path}/${'ab' * 32}.key.0011.tmp').writeAsStringSync('x');
       expect(await FileKeyStorage(dir).list(), isEmpty);
     });
+  });
+
+  group('strings that would not round-trip are rejected on write', () {
+    test('unpaired surrogates in a context', () {
+      for (final context in [
+        {'\uD800': 'a', '\uDC00': 'b'},
+        {'k': 'x\uD800'},
+        {'k': '\uDC00x'},
+        {'k': 'x\uD800𐀀'},
+      ]) {
+        expect(
+          () => engine.encrypt(
+            bytesOf('m'),
+            recipients: [kp.publicKey],
+            context: context,
+          ),
+          throwsA(isA<InvalidInputException>()),
+        );
+      }
+    });
+
+    test('valid surrogate pairs still round-trip', () {
+      const context = {'emoji 😀': 'value 𝄞'};
+      final env = engine.encrypt(
+        bytesOf('m'),
+        recipients: [kp.publicKey],
+        context: context,
+      );
+      expect(
+        engine.decrypt(
+          env,
+          privateKey: kp.privateKey,
+          requiredContext: context,
+        ),
+        bytesOf('m'),
+      );
+    });
+
+    test('over-long key labels and revocation reasons', () async {
+      final long = 'x' * 4097;
+      expect(
+        () => engine.encodeKey(
+          engine
+              .generateSigningKeyPair(metadata: KeyMetadata(label: long))
+              .publicKey,
+        ),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      final ok = engine.generateSigningKeyPair(
+        metadata: KeyMetadata(label: 'x' * 4096),
+      );
+      expect(
+        engine.decodeKey(engine.encodeKey(ok.publicKey)).metadata.label,
+        hasLength(4096),
+      );
+
+      final store = KeyStore(engine, InMemoryKeyStorage());
+      await store.putPair(ok);
+      await expectLater(
+        store.revoke(ok.keyId, reason: long),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      // The failed revoke left the stored key readable.
+      expect((await store.get(ok.keyId, private: true))!.keyId, ok.keyId);
+    });
+  });
+
+  test('an out-of-range metadata date is malformed, not a RangeError', () {
+    final created = DateTime.utc(2026, 1, 2, 3, 4, 5, 678);
+    final record = engine.encodeKey(
+      engine
+          .generateEncryptionKeyPair(metadata: KeyMetadata(createdAt: created))
+          .publicKey,
+    );
+    // Locate the big-endian u64 createdAt and replace it with 2^53 - 1,
+    // valid as a u64 but beyond DateTime's range.
+    final ms = created.millisecondsSinceEpoch;
+    final be = [for (var i = 7; i >= 0; i--) (ms >> (8 * i)) & 0xff];
+    var at = -1;
+    for (var i = 0; i + 8 <= record.length && at < 0; i++) {
+      if (List.generate(8, (j) => record[i + j]).join(',') == be.join(',')) {
+        at = i;
+      }
+    }
+    expect(at, greaterThan(0));
+    final bad = Uint8List.fromList(record)
+      ..setRange(at, at + 8, [0x00, 0x1f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    expect(() => engine.decodeKey(bad), throwsA(isA<MalformedDataException>()));
   });
 }

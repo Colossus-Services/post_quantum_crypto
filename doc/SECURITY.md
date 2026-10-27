@@ -79,9 +79,22 @@ both sides agree on the labels they supplied.
   for stronger protection.
 - **Revocation.** Removing a recipient (rewrap) or revoking a key does not
   revoke access to data or keys an attacker already copied.
+- **Not key-committing across recipients.** Each recipient unwraps the data
+  key independently, and AES-GCM and ChaCha20-Poly1305 do not commit to their
+  key. A malicious *sender* can therefore build one multi-recipient envelope
+  or stream that decrypts to different plaintexts for different recipients
+  ("invisible salamanders"). Signing the envelope proves who sent those
+  bytes, not that every recipient sees the same plaintext; when that matters,
+  sign the plaintext (or a digest of it) instead, or send each recipient
+  their own envelope.
 - **SLH-DSA key generation** uses pqcrypto's own `Random.secure()` (pqcrypto
   exposes no seeded entry point); all other randomness comes from this
   package's source.
+- **SLH-DSA private-key import** takes the public key from the secret key
+  (FIPS 205 stores `PK.seed || PK.root` inside it) without recomputing
+  `PK.root`. A corrupted unauthenticated import (PKCS#8, raw bytes) is not
+  detected until its signatures fail to verify; key records protected with a
+  password are authenticated and unaffected.
 - **Endpoints.** Post-quantum algorithms do not protect against compromised
   endpoints, stolen keys, malicious applications or implementation bugs.
 - **Web performance.** Argon2id is slow on dart2js (about 2.6 s for

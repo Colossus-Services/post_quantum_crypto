@@ -114,6 +114,47 @@ void main() {
     }
   });
 
+  test('algorithm identifiers round trip', () {
+    for (final a in HashAlgorithm.values) {
+      expect(HashAlgorithm.fromId(a.id), a);
+    }
+    for (final a in KemAlgorithm.values) {
+      expect(KemAlgorithm.fromId(a.id), a);
+    }
+    for (final a in SignatureAlgorithm.values) {
+      expect(SignatureAlgorithm.fromId(a.id), a);
+      expect(a.isMlDsa, !a.isSlhDsa);
+    }
+    expect(
+      () => HashAlgorithm.fromId(0xffff),
+      throwsA(isA<UnsupportedAlgorithmException>()),
+    );
+  });
+
+  test('CryptoBackend.copyWith replaces only the given providers', () {
+    const base = standardCryptoBackend;
+    final same = base.copyWith();
+    expect(same.symmetric, base.symmetric);
+    expect(same.postQuantum, base.postQuantum);
+    expect(same.keccak, base.keccak);
+    expect(same.x25519, base.x25519);
+    final swapped = base.copyWith(
+      symmetric: pointyCastleCryptoBackend.symmetric,
+    );
+    expect(swapped.symmetric, pointyCastleCryptoBackend.symmetric);
+    expect(swapped.postQuantum, base.postQuantum);
+  });
+
+  test('keys and recipients describe themselves without secrets', () {
+    final kp = engine.generateEncryptionKeyPair();
+    expect(kp.publicKey.toString(), contains(kp.keyId.fingerprint));
+    expect(kp.publicKey.hashCode, kp.publicKey.hashCode);
+    final sig = engine.generateSigningKeyPair();
+    expect(sig.publicKey.toString(), startsWith('SigningPublicKey('));
+    final env = engine.encrypt(bytesOf('m'), recipients: [kp.publicKey]);
+    expect(env.recipients.single.toString(), contains(kp.keyId.fingerprint));
+  });
+
   test('version matches pubspec', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
     final version = RegExp(

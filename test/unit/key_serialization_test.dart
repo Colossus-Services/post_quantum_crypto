@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
+import 'package:post_quantum_crypto/src/encoding/der.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -195,6 +196,103 @@ void main() {
         publicKey: kp.publicKey.bytes,
       );
       expect(ok.keyId, kp.keyId);
+    });
+
+    for (final alg in SignatureAlgorithm.values) {
+      test('${alg.standardName} SPKI and PKCS#8 round trip', () {
+        final kp = engine.generateSigningKeyPair(algorithm: alg);
+        expect(
+          engine.importPublicKeyDer(engine.exportPublicKeyDer(kp.publicKey)),
+          kp.publicKey,
+        );
+        final back =
+            engine.importPrivateKeyDer(
+                  engine.exportPrivateKeyDer(kp.privateKey),
+                )
+                as SigningPrivateKey;
+        expect(back.keyId, kp.keyId);
+        expect(back.publicKey.bytes, kp.publicKey.bytes);
+      });
+    }
+
+    group('PKCS#8 v2 embedded public key', () {
+      // Rebuilds a v1 PKCS#8 as v2 (OneAsymmetricKey, RFC 5958) carrying
+      // [publicKey] as the [1] element.
+      Uint8List withPublicKey(
+        Uint8List v1,
+        List<int> publicKey, {
+        int version = 1,
+      }) {
+        final outer = DerReader(v1);
+        final seq = DerReader(outer.expect(DerTag.sequence));
+        seq.expect(DerTag.integer);
+        final algId = seq.expect(DerTag.sequence);
+        final privateKey = seq.expect(DerTag.octetString);
+        return derSequence([
+          derTlv(DerTag.integer, [version]),
+          derTlv(DerTag.sequence, algId),
+          derTlv(DerTag.octetString, privateKey),
+          derTlv(DerTag.contextPrimitive1, [0, ...publicKey]),
+        ]);
+      }
+
+      test('a matching public key is accepted', () {
+        final enc = engine.generateEncryptionKeyPair();
+        final encDer = withPublicKey(
+          engine.exportPrivateKeyDer(enc.privateKey),
+          enc.publicKey.bytes,
+        );
+        expect(engine.importPrivateKeyDer(encDer).keyId, enc.keyId);
+
+        final sig = engine.generateSigningKeyPair();
+        final sigDer = withPublicKey(
+          engine.exportPrivateKeyDer(
+            sig.privateKey,
+            form: PrivateKeyDerForm.expanded,
+          ),
+          sig.publicKey.bytes,
+        );
+        expect(engine.importPrivateKeyDer(sigDer).keyId, sig.keyId);
+      });
+
+      test('a mismatching public key is rejected', () {
+        final enc = engine.generateEncryptionKeyPair();
+        final otherEnc = engine.generateEncryptionKeyPair();
+        expect(
+          () => engine.importPrivateKeyDer(
+            withPublicKey(
+              engine.exportPrivateKeyDer(enc.privateKey),
+              otherEnc.publicKey.bytes,
+            ),
+          ),
+          throwsA(isA<InvalidKeyException>()),
+        );
+
+        final sig = engine.generateSigningKeyPair();
+        final otherSig = engine.generateSigningKeyPair();
+        expect(
+          () => engine.importPrivateKeyDer(
+            withPublicKey(
+              engine.exportPrivateKeyDer(sig.privateKey),
+              otherSig.publicKey.bytes,
+            ),
+          ),
+          throwsA(isA<InvalidKeyException>()),
+        );
+      });
+
+      test('a v1 structure may not carry a public key', () {
+        final kp = engine.generateEncryptionKeyPair();
+        final v1 = withPublicKey(
+          engine.exportPrivateKeyDer(kp.privateKey),
+          kp.publicKey.bytes,
+          version: 0,
+        );
+        expect(
+          () => engine.importPrivateKeyDer(v1),
+          throwsA(isA<MalformedDataException>()),
+        );
+      });
     });
 
     test('X-Wing has no DER form', () {

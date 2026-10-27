@@ -111,17 +111,27 @@ final class KeyStore {
   }
 
   /// Loads a key. Returns the private key when [private] is true.
+  ///
+  /// Throws [InvalidKeyException] when the stored entry holds a different
+  /// key, or a private key where a public one belongs (or vice versa), e.g.
+  /// after a file was copied over another.
   Future<QuantumKey?> get(KeyId id, {bool private = false}) async {
     final data = await storage.read(_name(id, private));
     if (data == null) return null;
+    final QuantumKey key;
     try {
-      if (private && _password != null) {
-        return engine.importPrivateKeyWithPassword(data, _password);
-      }
-      return engine.decodeKey(data);
+      key = private && _password != null
+          ? engine.importPrivateKeyWithPassword(data, _password)
+          : engine.decodeKey(data);
     } finally {
       zeroize(data);
     }
+    if (key.keyId != id || key.isPrivate != private) {
+      if (key case EncryptionPrivateKey k) k.destroy();
+      if (key case SigningPrivateKey k) k.destroy();
+      throw const InvalidKeyException('Stored key does not match its entry');
+    }
+    return key;
   }
 
   /// The public half of a stored key, derived from the private half when

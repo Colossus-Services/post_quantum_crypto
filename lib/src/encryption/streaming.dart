@@ -399,7 +399,6 @@ final class StreamService {
           h.headerHash,
         );
         if (pt == null) throw const DecryptionFailedException();
-        processed += pt.length;
         out.add(pt);
       }
       return out;
@@ -410,7 +409,9 @@ final class StreamService {
         cancel?.throwIfCancelled();
         queue.add(data);
         if (header == null && !tryHeader(atEnd: false)) continue;
+        // Progress counts each chunk as it is emitted, not the whole batch.
         for (final pt in drainFull()) {
+          processed += pt.length;
           onProgress?.call(processed);
           yield pt;
         }
@@ -419,6 +420,7 @@ final class StreamService {
       if (header == null) {
         tryHeader(atEnd: true);
         for (final pt in drainFull()) {
+          processed += pt.length;
           onProgress?.call(processed);
           yield pt;
         }

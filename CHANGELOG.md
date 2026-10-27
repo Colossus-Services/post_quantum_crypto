@@ -1,14 +1,42 @@
 ## 1.0.1
 
-### CI
+### Fixed
+
+- **Key metadata**: a label or revocation reason over 4096 UTF-8 bytes is
+  now rejected when written (`ResourceLimitExceededException`). Before, it
+  was written but could not be read back, making the stored key
+  unrecoverable.
+- **Key metadata**: a date beyond `DateTime`'s range in a key record raises
+  `MalformedDataException` instead of a raw `RangeError`.
+- **Strings with unpaired UTF-16 surrogates** (in contexts, signed metadata,
+  labels, manifest paths, passwords, hybrid identities) are rejected with
+  `InvalidInputException`. Before, they were silently encoded as U+FFFD, so
+  two distinct context keys could produce an envelope that no recipient
+  could open, and decoding did not reproduce the input.
+- **`KeyStore.get`** checks that the stored entry holds the requested key
+  (key id, and private vs public); a swapped or misplaced file raises
+  `InvalidKeyException` instead of returning a different key.
+- **`FileKeyStorage.delete`** waits for pending writes of the same key, so
+  a delete issued after a write is no longer undone by that write.
+- **Stream decryption progress**: `onProgress` reports each chunk as it is
+  emitted instead of the total of a batch of chunks ahead of time.
+
+### Documentation
+
+- SECURITY.md: multi-recipient envelopes and streams are not key-committing;
+  SLH-DSA private-key import takes the public key from the secret key.
+- README: file APIs and caller-supplied input streams let their own errors
+  through unchanged.
+- `TrustStore.evaluate` and `decryptFile` document their clock and file
+  permission behaviour.
+
+### CI and tests
 
 - Coverage is uploaded to Codecov (`codecov/codecov-action@v7`); README
   shows the Codecov badge. `actions/checkout` upgraded to v7.
-
-### Tests
-
-- Added `test/unit/version_test.dart`, pinning `postQuantumCryptoVersion`
-  to `pubspec.yaml` (it was referenced but missing).
+- New tests for DER/PKCS#8 of every signature algorithm, PKCS#8 v2
+  embedded public keys, stream decryption cancellation and deferred header
+  parsing, and the fixes above.
 
 ## 1.0.0
 

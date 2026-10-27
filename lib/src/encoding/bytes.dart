@@ -49,7 +49,25 @@ Bytes immutableCopy(List<int> bytes) =>
     Uint8List.fromList(bytes).asUnmodifiableView();
 
 /// UTF-8 encodes [s].
-Bytes utf8Bytes(String s) => Uint8List.fromList(utf8.encode(s));
+///
+/// Throws [InvalidInputException] for an unpaired UTF-16 surrogate, which
+/// `utf8.encode` would silently replace with U+FFFD: distinct strings would
+/// then encode identically, and decoding would not reproduce the input.
+Bytes utf8Bytes(String s) {
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    if (c < 0xd800 || c > 0xdfff) continue;
+    if (c <= 0xdbff && i + 1 < s.length) {
+      final next = s.codeUnitAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+    }
+    throw const InvalidInputException('String has an unpaired surrogate');
+  }
+  return Uint8List.fromList(utf8.encode(s));
+}
 
 /// Writes the canonical big-endian binary encodings used by every format in
 /// this package.

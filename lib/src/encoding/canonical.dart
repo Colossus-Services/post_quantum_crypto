@@ -50,15 +50,6 @@ void readHeader(ByteReader r, int expectedType) {
   }
 }
 
-/// Peeks at the object type of [data] without validating the rest.
-int? peekObjectType(Uint8List data) {
-  if (data.length < 6) return null;
-  for (var i = 0; i < 4; i++) {
-    if (data[i] != formatMagic[i]) return null;
-  }
-  return data[4] == formatVersion ? data[5] : null;
-}
-
 /// Limits applied when decoding a canonical string map.
 typedef MapLimits = ({int maxEntries, int maxKeyBytes, int maxValueBytes});
 
@@ -87,10 +78,17 @@ abstract final class CanonicalMap {
     }
     final entries = _sortedEntries(map);
     w.u16(entries.length);
+    Uint8List? previous;
     for (final e in entries) {
       if (e.key.isEmpty) {
         throw const InvalidInputException('Map keys must not be empty');
       }
+      // The reader requires strictly ascending keys; never write a map it
+      // would reject.
+      if (previous != null && compareBytes(previous, e.key) == 0) {
+        throw const InvalidInputException('Duplicate map key');
+      }
+      previous = e.key;
       if (e.key.length > limits.maxKeyBytes || e.key.length > 0xff) {
         throw const ResourceLimitExceededException('Map key too long');
       }
