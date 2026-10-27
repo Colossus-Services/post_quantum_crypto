@@ -15,7 +15,6 @@ import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
-import '../unit/key_serialization_test.dart' show fastArgon;
 
 final int _iterations =
     int.tryParse(Platform.environment['QC_FUZZ_ITERATIONS'] ?? '') ?? 300;

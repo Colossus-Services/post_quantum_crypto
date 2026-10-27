@@ -4,7 +4,6 @@ import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
-import '../unit/key_serialization_test.dart' show fastArgon;
 
 void main() {
   for (final password in [null, 'store password']) {

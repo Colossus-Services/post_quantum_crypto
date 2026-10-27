@@ -9,7 +9,6 @@ import 'package:post_quantum_crypto/src/encoding/der.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
-import 'key_serialization_test.dart' show fastArgon;
 
 /// RFC 5958 OneAsymmetricKey tags: `[1] IMPLICIT BIT STRING` publicKey and
 /// `[0]` attributes (spelled out so the test does not depend on lib).
@@ -175,51 +174,87 @@ void main() {
       }
     });
 
-    test('backup skips a mismatched entry and keeps the rest', () async {
+    for (final password in [null, 'store passphrase']) {
+      test('backup keeps a key moved to another entry '
+          '(password: ${password != null})', () async {
+        final storage = InMemoryKeyStorage();
+        final store = KeyStore(
+          engine,
+          storage,
+          password: password,
+          parameters: fastArgon,
+        );
+        final a = engine.generateEncryptionKeyPair();
+        final b = engine.generateSigningKeyPair();
+        await store.putPair(a);
+        await store.putPair(b);
+        // B's private key moved over A's private entry, and A's public
+        // record over B's public entry: each key now exists only under the
+        // other's name.
+        final bKey = (await storage.read('${b.keyId.hex}.key'))!;
+        final aPub = (await storage.read('${a.keyId.hex}.pub'))!;
+        await storage.write('${a.keyId.hex}.key', bKey);
+        await storage.delete('${b.keyId.hex}.key');
+        await storage.write('${b.keyId.hex}.pub', aPub);
+        await storage.delete('${a.keyId.hex}.pub');
+
+        final backup = await store.backup(
+          'backup passphrase',
+          parameters: fastArgon,
+        );
+        final restored = KeyStore(engine, InMemoryKeyStorage());
+        await restored.restore(backup, 'backup passphrase');
+        // Each key is restored under its own name.
+        expect(await restored.get(a.keyId), a.publicKey);
+        expect((await restored.get(b.keyId, private: true))!.keyId, b.keyId);
+        expect(await restored.get(a.keyId, private: true), isNull);
+      });
+    }
+
+    test('backup skips an undecodable entry only with onSkipped', () async {
       final storage = InMemoryKeyStorage();
       final store = KeyStore(engine, storage);
       final a = engine.generateEncryptionKeyPair();
-      final b = engine.generateEncryptionKeyPair();
       await store.putPair(a);
-      await store.putPair(b);
-      // B's public record copied over A's.
-      await storage.write(
-        '${a.keyId.hex}.pub',
-        (await storage.read('${b.keyId.hex}.pub'))!,
+      final bad = '${'ab' * 32}.key';
+      await storage.write(bad, Uint8List.fromList([1, 2, 3]));
+      // Without onSkipped nothing is dropped silently: the backup fails.
+      await expectLater(
+        store.backup('backup passphrase', parameters: fastArgon),
+        throwsA(isA<MalformedDataException>()),
       );
-      final skipped = <(KeyId, bool)>[];
+      final skipped = <String>[];
       final backup = await store.backup(
         'backup passphrase',
         parameters: fastArgon,
-        onSkipped: (id, private, _) => skipped.add((id, private)),
+        onSkipped: (entry, _) => skipped.add(entry),
       );
-      expect(skipped, [(a.keyId, false)]);
-
+      expect(skipped, [bad]);
       final restored = KeyStore(engine, InMemoryKeyStorage());
-      await restored.restore(backup, 'backup passphrase');
-      // A's private half and both halves of B made it into the backup.
-      expect((await restored.get(a.keyId, private: true))!.keyId, a.keyId);
-      expect(await restored.get(b.keyId), b.publicKey);
-      expect((await restored.get(b.keyId, private: true))!.keyId, b.keyId);
+      expect(await restored.restore(backup, 'backup passphrase'), [a.keyId]);
     });
 
-    test('backup still fails on a wrong store password', () async {
-      final storage = InMemoryKeyStorage();
-      await KeyStore(
-        engine,
-        storage,
-        password: 'store passphrase one',
-        parameters: fastArgon,
-      ).putPair(engine.generateEncryptionKeyPair());
-      await expectLater(
-        KeyStore(
+    test(
+      'backup fails on a wrong store password, even with onSkipped',
+      () async {
+        final storage = InMemoryKeyStorage();
+        await KeyStore(
           engine,
           storage,
-          password: 'store passphrase two',
-        ).backup('backup passphrase', parameters: fastArgon),
-        throwsA(isA<DecryptionFailedException>()),
-      );
-    });
+          password: 'store passphrase one',
+          parameters: fastArgon,
+        ).putPair(engine.generateEncryptionKeyPair());
+        // Private keys must never be dropped because the password is wrong.
+        await expectLater(
+          KeyStore(engine, storage, password: 'store passphrase two').backup(
+            'backup passphrase',
+            parameters: fastArgon,
+            onSkipped: (_, _) {},
+          ),
+          throwsA(isA<DecryptionFailedException>()),
+        );
+      },
+    );
 
     test('a private record in a public entry is rejected', () async {
       final storage = InMemoryKeyStorage();

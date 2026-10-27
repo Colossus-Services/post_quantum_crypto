@@ -6,14 +6,6 @@ import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
 
-/// Small Argon2id parameters so the suite stays fast. They are inside the
-/// default [PasswordPolicy] bounds (minimum 8 MiB).
-const fastArgon = Argon2idParameters(
-  memoryKiB: 8 * 1024,
-  iterations: 1,
-  parallelism: 1,
-);
-
 void main() {
   group('KeyId', () {
     test('is deterministic and algorithm-bound', () {
