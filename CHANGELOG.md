@@ -30,6 +30,14 @@
 - `TrustStore.evaluate` and `decryptFile` document their clock and file
   permission behaviour.
 
+### Examples
+
+- New `example/sharing_and_releases.dart` (group sharing with
+  add/remove recipients, password-based encryption, streaming progress,
+  signed manifests and artifacts) and `example/key_management.dart`
+  (metadata, rotation, revocation, policies, backup/restore, PEM). The
+  README lists every example, and CI runs them all.
+
 ### CI and tests
 
 - Coverage is uploaded to Codecov (`codecov/codecov-action@v7`); README

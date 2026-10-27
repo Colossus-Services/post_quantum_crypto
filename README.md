@@ -35,6 +35,20 @@ See the [API Documentation][api_doc] for the full list of classes and APIs.
 
 [api_doc]: https://pub.dev/documentation/post_quantum_crypto/latest/
 
+Runnable examples (`dart run example/<name>.dart`):
+
+- [`post_quantum_crypto_example.dart`](example/post_quantum_crypto_example.dart):
+  quick tour (encryption, signatures, trust, PEM, X-Wing key establishment).
+- [`sharing_and_releases.dart`](example/sharing_and_releases.dart): sharing
+  with a changing group (add/remove recipients), authenticated context,
+  password-based encryption, streaming with progress, signed release
+  manifests and signed artifacts.
+- [`key_management.dart`](example/key_management.dart): key metadata,
+  rotation, revocation, security policies, encrypted backup and restore,
+  PEM export.
+- [`file_encryption.dart`](example/file_encryption.dart): streaming file
+  encryption, a file-backed key store and password-protected key export.
+
 ## Installation
 
 ```sh

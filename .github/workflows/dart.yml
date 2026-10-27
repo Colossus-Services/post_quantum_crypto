@@ -24,6 +24,8 @@ jobs:
         run: dart analyze --fatal-infos --fatal-warnings .
       - name: dependency_validator
         run: dart run dependency_validator
+      - name: Run examples
+        run: for f in example/*.dart; do echo "== $f"; dart run "$f"; done
       - name: dart doc
         run: dart doc --dry-run
       - name: dart pub publish --dry-run
