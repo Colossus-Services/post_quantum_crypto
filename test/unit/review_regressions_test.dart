@@ -343,21 +343,11 @@ void main() {
       }
     });
 
-    test('passwords are only hashed, so 1.0.0 behaviour is kept', () {
-      // Lone surrogates encode as U+FFFD, as in 1.0.0: data sealed under
-      // such a password must stay openable.
-      final sealed = engine.encryptWithPassword(
-        bytesOf('m'),
-        'pass\uD800word-long',
-        parameters: const Argon2idParameters(
-          memoryKiB: 8 * 1024,
-          iterations: 1,
-          parallelism: 1,
-        ),
-      );
+    test('unpaired surrogates in passwords', () {
+      // 'pass\uD800word' and 'pass\uDC00word' must not be the same password.
       expect(
-        engine.decryptWithPassword(sealed, 'pass\uD800word-long'),
-        bytesOf('m'),
+        () => engine.encryptWithPassword(bytesOf('m'), 'pass\uD800word-long'),
+        throwsA(isA<InvalidInputException>()),
       );
     });
 

@@ -43,6 +43,13 @@ final class CryptoContext {
   SignaturePrimitive signature(SignatureAlgorithm algorithm) =>
       backend.postQuantum.signature(algorithm);
 
+  /// Reads the common object header under this context's policy and returns
+  /// its format version. Every parser goes through here, so which versions
+  /// are readable is decided in one place (see "Format evolution" in
+  /// doc/FORMATS.md).
+  int readObjectHeader(ByteReader r, int expectedType) =>
+      readHeader(r, expectedType, acceptLegacy: policy.acceptLegacyFormats);
+
   MapLimits get mapLimits => (
     maxEntries: policy.limits.maxContextEntries,
     maxKeyBytes: policy.limits.maxContextKeyBytes,

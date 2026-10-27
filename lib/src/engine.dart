@@ -57,7 +57,7 @@ final class PostQuantumCryptoEngine {
   );
 
   PostQuantumCryptoEngine._(this.ctx) : _keys = KeyFactory(ctx) {
-    _codec = KeyCodec(_keys);
+    _codec = KeyCodec(ctx, _keys);
     _password = PasswordProtection(ctx);
     _envelopes = EnvelopeService(ctx);
     _signed = SignedObjectService(ctx);
@@ -681,4 +681,10 @@ final class PostQuantumCryptoEngine {
     SignedManifest manifest, {
     required SigningPublicKey publicKey,
   }) => _signed.verifyManifest(manifest, publicKey);
+
+  /// A [TrustStore] whose expiry decisions use this engine's policy clock,
+  /// so they agree with the engine's own key checks.
+  TrustStore createTrustStore([
+    Iterable<SigningPublicKey> trusted = const [],
+  ]) => TrustStore.withClock(ctx.policy.now, trusted);
 }

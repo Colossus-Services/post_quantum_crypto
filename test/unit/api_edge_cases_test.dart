@@ -189,6 +189,45 @@ void main() {
       lenient.encrypt(bytesOf('m'), recipients: [key]);
       expect(lenient.policy.minimumSecurityCategory, 1);
     });
+
+    test('createTrustStore judges expiry by the policy clock', () {
+      final signer = engine.generateSigningKeyPair();
+      final verified = engine.verifyDetached(
+        bytesOf('m'),
+        signature: engine.signDetached(
+          bytesOf('m'),
+          privateKey: signer.privateKey,
+        ),
+        publicKey: signer.publicKey,
+      );
+      final expiring = signer.publicKey.withMetadata(
+        KeyMetadata(expiresAt: DateTime.utc(2030)),
+      );
+      SecurityPolicy at(int year) =>
+          SecurityPolicy(clock: () => DateTime.utc(year));
+      expect(
+        engine
+            .withPolicy(at(2029))
+            .createTrustStore([expiring])
+            .evaluate(verified),
+        TrustDecision.trusted,
+      );
+      expect(
+        engine
+            .withPolicy(at(2031))
+            .createTrustStore([expiring])
+            .evaluate(verified),
+        TrustDecision.expired,
+      );
+      // An explicit time still wins.
+      expect(
+        engine
+            .withPolicy(at(2031))
+            .createTrustStore([expiring])
+            .evaluate(verified, at: DateTime.utc(2029)),
+        TrustDecision.trusted,
+      );
+    });
   });
 
   group('canonical map limits', () {

@@ -12,7 +12,7 @@
 /// u16 recipientCount, then per recipient:
 ///   u16 kemId | 32 keyId | enc (KEM ciphertext) | wrappedDek (32 + 16)
 ///   ── h0 = SHA-384(all bytes so far)
-/// 32  commitment     (version 2 only; see commitment.dart)
+/// 32  commitment     (see commitment.dart)
 /// 12  payloadNonce
 ///   ── payloadAad = SHA-384(all bytes so far)
 /// u32 ciphertextLength | ciphertext || tag
@@ -20,11 +20,9 @@
 ///
 /// The payload AAD covers the whole header including every recipient entry,
 /// so adding, removing, substituting or reordering recipients, or editing the
-/// context, makes the payload fail authentication. In version 2 the payload
-/// key is derived from the DEK together with a stored commitment, so every
-/// recipient necessarily decrypts the same plaintext. Version 1 (payload
-/// sealed directly with the DEK, no commitment) is read only under
-/// `SecurityPolicy.acceptLegacyFormats`.
+/// context, makes the payload fail authentication. The payload key is
+/// derived from the DEK together with the stored commitment, so every
+/// recipient necessarily decrypts the same plaintext.
 library;
 
 import 'dart:typed_data';
@@ -59,15 +57,13 @@ final class EnvelopeRecipient {
 final class EncryptedEnvelope {
   final Bytes _bytes;
 
-  /// The wire-format version: 2 (key-committing) for envelopes this release
-  /// writes, 1 for legacy envelopes read under
-  /// `SecurityPolicy.acceptLegacyFormats`.
+  /// The wire-format version of this envelope (see doc/FORMATS.md).
   final int formatVersion;
 
   /// The AEAD protecting the payload and the wrapped keys.
   final AeadAlgorithm aead;
 
-  /// The KDF used for key wrapping (always HKDF-SHA-384 in version 1).
+  /// The KDF used for key wrapping (always HKDF-SHA-384).
   final KdfAlgorithm kdf;
 
   /// The authenticated application context. Not secret, and not proof of
@@ -89,13 +85,13 @@ final class EncryptedEnvelope {
   @internal
   final Bytes payloadAad;
 
-  /// Digest of the bytes before the commitment (version 2 only).
+  /// Digest of the bytes before the commitment.
   @internal
-  final Bytes? h0;
+  final Bytes h0;
 
-  /// The stored key commitment (version 2 only).
+  /// The stored key commitment.
   @internal
-  final Bytes? commitment;
+  final Bytes commitment;
 
   EncryptedEnvelope._(
     this._bytes,
@@ -133,11 +129,7 @@ final class EncryptedEnvelope {
   static EncryptedEnvelope parse(CryptoContext ctx, Uint8List data) =>
       parseStrict(() {
         final r = ByteReader(data);
-        final version = readHeader(
-          r,
-          ObjectType.envelope,
-          acceptLegacy: ctx.policy.acceptLegacyFormats,
-        );
+        final version = ctx.readObjectHeader(r, ObjectType.envelope);
         final kdf = KdfAlgorithm.fromId(r.u16());
         if (kdf != KdfAlgorithm.hkdfSha384) {
           throw const UnsupportedAlgorithmException('Unsupported KDF');
@@ -150,12 +142,8 @@ final class EncryptedEnvelope {
           aead,
           ctx.policy.limits.maxRecipients,
         );
-        Uint8List? h0;
-        Uint8List? commitment;
-        if (version >= formatVersion2) {
-          h0 = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
-          commitment = r.fixed(commitmentLength);
-        }
+        final h0 = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
+        final commitment = r.fixed(commitmentLength);
         final nonce = r.fixed(aead.nonceLength);
         final payloadAad = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
         final ct = r.view32(
@@ -259,40 +247,38 @@ final class EnvelopeService {
       key,
       envelope.headerHash,
       envelope.aead,
-      envelope.formatVersion,
     );
     if (dek == null) throw const DecryptionFailedException();
+    final CommittedKey committed;
     try {
-      if (envelope.formatVersion < formatVersion2) {
-        // Legacy: payload sealed directly with the (uncommitted) DEK.
-        return _open(envelope, dek);
-      }
-      final committed = CommittedKey.derive(
+      committed = CommittedKey.derive(
         _ctx,
         _purpose,
         dek,
-        envelope.h0!,
+        envelope.h0,
         envelope.aead.keyLength,
       );
-      try {
-        if (!committed.matches(envelope.commitment!)) {
-          throw const DecryptionFailedException();
-        }
-        return _open(envelope, committed.key);
-      } finally {
-        committed.destroy();
-      }
     } finally {
       zeroize(dek);
     }
-  }
-
-  Uint8List _open(EncryptedEnvelope envelope, Uint8List key) {
-    final pt = _ctx
-        .aead(envelope.aead)
-        .open(key, envelope.nonce, envelope.ciphertext, envelope.payloadAad);
-    if (pt == null) throw const DecryptionFailedException();
-    return pt;
+    try {
+      // The commitment is checked before the AEAD is opened.
+      if (!committed.matches(envelope.commitment)) {
+        throw const DecryptionFailedException();
+      }
+      final pt = _ctx
+          .aead(envelope.aead)
+          .open(
+            committed.key,
+            envelope.nonce,
+            envelope.ciphertext,
+            envelope.payloadAad,
+          );
+      if (pt == null) throw const DecryptionFailedException();
+      return pt;
+    } finally {
+      committed.destroy();
+    }
   }
 
   /// Decrypts with [key] and re-encrypts the plaintext to [recipients] under

@@ -173,7 +173,7 @@ final class HybridKeyService {
     _checkLength(length);
     final (kem, keyId, enc) = parseStrict(() {
       final r = ByteReader(message);
-      readHeader(r, ObjectType.hybridKeyMessage);
+      _ctx.readObjectHeader(r, ObjectType.hybridKeyMessage);
       final kem = KemAlgorithm.fromId(r.u16());
       _checkHybrid(kem);
       final keyId = KeyId(r.fixed(KeyId.length));

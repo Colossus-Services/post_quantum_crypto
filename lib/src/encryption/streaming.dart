@@ -8,12 +8,12 @@
 /// "PQCR" u8 version=2 u8 type=0x03
 /// u16 kdfId (HKDF-SHA-384) | u16 aeadId
 /// u32 chunkSize                      plaintext bytes per chunk
-/// 32  salt | 7 noncePrefix
+/// 7   noncePrefix
 /// context (canonical map)
 ///   ── wrapHash   = SHA-384(bytes so far)   (AAD of every DEK wrap)
 /// u16 recipientCount, recipient records (as in envelopes)
 ///   ── h0         = SHA-384(bytes so far)
-/// 32  commitment                     (version 2 only; see commitment.dart)
+/// 32  commitment                     (see commitment.dart)
 ///   ── headerHash = SHA-384(entire header)
 /// chunk*                             ciphertext || tag, no framing
 /// ```
@@ -21,10 +21,7 @@
 /// - Stream key: the committed payload key derived from the DEK and `h0`
 ///   (commitment.dart), so every recipient decrypts the same chunks. The DEK
 ///   is fresh for every stream, so every stream has a fresh key and nonces
-///   can never repeat across streams. Version 1 (read only under
-///   `SecurityPolicy.acceptLegacyFormats`) has no commitment and uses
-///   `HKDF-SHA-384(salt, DEK, "post_quantum_crypto/v1/stream/key" ||
-///   headerHash)`.
+///   can never repeat across streams.
 /// - Chunk `i` nonce: `noncePrefix(7) || u32 i || u8 final`, AAD:
 ///   `headerHash`. The counter detects reordering, duplication and removal;
 ///   the final flag detects truncation and appended data; the header hash
@@ -53,7 +50,6 @@ import 'key_wrapping.dart';
 /// Default plaintext bytes per chunk.
 const int defaultStreamChunkSize = 64 * 1024;
 
-const int _saltLength = 32;
 const int _noncePrefixLength = 7;
 const int _maxChunks = 0xffffffff;
 
@@ -67,8 +63,7 @@ int _maxStreamHeaderBytes(CryptoContext ctx) {
   final maxCt = KemAlgorithm.values
       .map((k) => k.ciphertextLength)
       .reduce((a, b) => a > b ? a : b);
-  const fixed =
-      6 + 2 + 2 + 4 + _saltLength + _noncePrefixLength + commitmentLength;
+  const fixed = 6 + 2 + 2 + 4 + _noncePrefixLength + commitmentLength;
   final map =
       2 + l.maxContextEntries * (1 + keyBytes + 4 + l.maxContextValueBytes);
   final recipients =
@@ -94,17 +89,13 @@ final class CancellationToken {
 
 /// Parsed stream header.
 final class StreamHeader {
-  /// The wire-format version: 2 (key-committing) for streams this release
-  /// writes, 1 for legacy streams read under
-  /// `SecurityPolicy.acceptLegacyFormats`.
+  /// The wire-format version of this stream (see doc/FORMATS.md).
   final int formatVersion;
 
   final AeadAlgorithm aead;
   final int chunkSize;
   final Map<String, String> context;
 
-  @internal
-  final Bytes salt;
   @internal
   final Bytes noncePrefix;
   @internal
@@ -114,13 +105,13 @@ final class StreamHeader {
   @internal
   final Bytes headerHash;
 
-  /// Digest of the header bytes before the commitment (version 2 only).
+  /// Digest of the header bytes before the commitment.
   @internal
-  final Bytes? h0;
+  final Bytes h0;
 
-  /// The stored key commitment (version 2 only).
+  /// The stored key commitment.
   @internal
-  final Bytes? commitment;
+  final Bytes commitment;
 
   /// Encoded header length in bytes.
   final int length;
@@ -130,7 +121,6 @@ final class StreamHeader {
     this.aead,
     this.chunkSize,
     this.context,
-    this.salt,
     this.noncePrefix,
     this.records,
     this.wrapHash,
@@ -149,35 +139,25 @@ final class StreamHeader {
   @internal
   static StreamHeader read(CryptoContext ctx, Uint8List data) {
     final r = ByteReader(data);
-    final version = readHeader(
-      r,
-      ObjectType.stream,
-      acceptLegacy: ctx.policy.acceptLegacyFormats,
-    );
+    final version = ctx.readObjectHeader(r, ObjectType.stream);
     if (KdfAlgorithm.fromId(r.u16()) != KdfAlgorithm.hkdfSha384) {
       throw const UnsupportedAlgorithmException('Unsupported KDF');
     }
     final aead = AeadAlgorithm.fromId(r.u16());
     final chunkSize = r.u32();
     _checkChunkSize(ctx, chunkSize);
-    final salt = r.fixed(_saltLength);
     final prefix = r.fixed(_noncePrefixLength);
     final context = CanonicalMap.read(r, ctx.mapLimits);
     final wrapHash = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
     final records = readRecipients(r, aead, ctx.policy.limits.maxRecipients);
-    Uint8List? h0;
-    Uint8List? commitment;
-    if (version >= formatVersion2) {
-      h0 = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
-      commitment = r.fixed(commitmentLength);
-    }
+    final h0 = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
+    final commitment = r.fixed(commitmentLength);
     final headerHash = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
     return StreamHeader._(
       version,
       aead,
       chunkSize,
       context,
-      salt,
       prefix,
       records,
       wrapHash,
@@ -255,25 +235,6 @@ final class StreamService {
 
   static const _purpose = 'stream';
 
-  static final Uint8List _legacyKeyLabel = utf8Bytes(
-    'post_quantum_crypto/v1/stream/key',
-  );
-
-  /// The version-1 stream key (no commitment); read path only.
-  Uint8List _legacyStreamKey(Uint8List dek, StreamHeader h) {
-    final kdf = _ctx.hkdfSha384;
-    final prk = kdf.extract(h.salt, dek);
-    try {
-      return kdf.expand(
-        prk,
-        concatBytes([_legacyKeyLabel, h.headerHash]),
-        h.aead.keyLength,
-      );
-    } finally {
-      zeroize(prk);
-    }
-  }
-
   static Uint8List _nonce(Uint8List prefix, int counter, bool last) =>
       Uint8List(12)
         ..setAll(0, prefix)
@@ -305,7 +266,6 @@ final class StreamService {
       ..u16(KdfAlgorithm.hkdfSha384.id)
       ..u16(aead.id)
       ..u32(chunkSize)
-      ..raw(_ctx.randomBytes(_saltLength))
       ..raw(_ctx.randomBytes(_noncePrefixLength));
     CanonicalMap.write(w, context, _ctx.mapLimits);
     final wrapHash = _ctx.sha384(w.toBytes());
@@ -502,24 +462,17 @@ final class StreamService {
     _ctx.policy.checkAead(h.aead);
     checkRequiredContext(h.context, requiredContext);
     final record = selectRecipient(_ctx, h.records, key);
-    final dek = _wrapper.unwrap(
-      record,
-      key,
-      h.wrapHash,
-      h.aead,
-      h.formatVersion,
-    );
+    final dek = _wrapper.unwrap(record, key, h.wrapHash, h.aead);
     if (dek == null) throw const DecryptionFailedException();
     try {
-      if (h.formatVersion < formatVersion2) return _legacyStreamKey(dek, h);
       final committed = CommittedKey.derive(
         _ctx,
         _purpose,
         dek,
-        h.h0!,
+        h.h0,
         h.aead.keyLength,
       );
-      if (!committed.matches(h.commitment!)) {
+      if (!committed.matches(h.commitment)) {
         committed.destroy();
         throw const DecryptionFailedException();
       }

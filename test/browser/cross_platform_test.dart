@@ -228,10 +228,10 @@ void main() {
 
 /// SHA-256 of the deterministic outputs, recorded on the Dart VM.
 const _pinned = <String, String>{
-  'encKey': '8c756e434d9b99002fb0197c3d526376d5f116c3b7b91e4bdad17a71f2745ead',
-  'sigKey': '8c7121012dcefa3ffb676668eb6ee4868c429bb30d6b2387fcfe383cfced2469',
+  'encKey': '7d3493387e90f4947a704bad3c7d9871442e40c211eaed4392f2db5c3ee1b46d',
+  'sigKey': '1e5fe9283717b1b1bfe7ee80b43e95e5599c83c60f98347ef6b69104612aa943',
   'envelope':
-      'dfa8a796ebe9002b3f93562ccdcdaf9963d13cdbc60504aba503c4d37d0deb24',
+      '6814a6776248faf954866fce0d0a27292b1f7051be513f978d8e3e721fa69dd8',
   'signature':
-      'd69920f4c5af0db0ad7cd7309a412441909e7ccf606e443ed835ac47e4bc7ba0',
+      '7a9950353af36665dc786044d4079d60e14b80a5d9540ecb2a760dc97e64e1d3',
 };

@@ -16,17 +16,15 @@
 /// u16 aeadId
 /// context (canonical map, authenticated)
 ///   ── h0 = SHA-384(all bytes so far)
-/// 32  commitment     (version 2 only)
+/// 32  commitment
 /// 12  nonce
 ///   ── aad = all bytes so far
 /// u32 ciphertextLength | ciphertext || tag
 /// ```
 ///
-/// In version 2, a 32-byte Argon2id output feeds the committing derivation
+/// A 32-byte Argon2id output feeds the committing derivation
 /// (commitment.dart), so a ciphertext opens under at most one password; this
-/// rules out partitioning-oracle attacks. Version 1 used the Argon2id output
-/// directly as the AEAD key and is read only under
-/// `SecurityPolicy.acceptLegacyFormats`.
+/// rules out partitioning-oracle attacks.
 library;
 
 import 'dart:typed_data';
@@ -185,29 +183,24 @@ final class PasswordProtection {
 
   static const _purpose = 'password';
 
-  /// Argon2id output length in version 2 (the committing derivation's IKM).
+  /// Argon2id output length (the committing derivation's input).
   static const _secretLength = 32;
 
   /// Parsed header of a password object.
   ({
-    int version,
     Argon2idParameters parameters,
     Uint8List salt,
     AeadAlgorithm aead,
     Map<String, String> context,
-    Uint8List? h0,
-    Uint8List? commitment,
+    Uint8List h0,
+    Uint8List commitment,
     Uint8List nonce,
     Uint8List aad,
     Uint8List ciphertext,
   })
   parse(int type, Uint8List bytes) => parseStrict(() {
     final r = ByteReader(bytes);
-    final version = readHeader(
-      r,
-      type,
-      acceptLegacy: _ctx.policy.acceptLegacyFormats,
-    );
+    _ctx.readObjectHeader(r, type);
     if (r.u8() != _kdfArgon2id) {
       throw const UnsupportedAlgorithmException('Unsupported password KDF');
     }
@@ -219,18 +212,13 @@ final class PasswordProtection {
     final salt = r.fixed(_saltLength);
     final aead = AeadAlgorithm.fromId(r.u16());
     final context = CanonicalMap.read(r, _ctx.mapLimits);
-    Uint8List? h0;
-    Uint8List? commitment;
-    if (version >= formatVersion2) {
-      h0 = _ctx.sha384(Uint8List.sublistView(bytes, 0, r.offset));
-      commitment = r.fixed(commitmentLength);
-    }
+    final h0 = _ctx.sha384(Uint8List.sublistView(bytes, 0, r.offset));
+    final commitment = r.fixed(commitmentLength);
     final nonce = r.fixed(aead.nonceLength);
     final aad = Uint8List.fromList(Uint8List.sublistView(bytes, 0, r.offset));
     final ct = r.bytes32(max: _maxPasswordPayload + aead.tagLength);
     r.expectEnd();
     return (
-      version: version,
       parameters: p,
       salt: salt,
       aead: aead,
@@ -254,15 +242,6 @@ final class PasswordProtection {
     _ctx.policy.checkAead(o.aead);
     checkParameters(o.parameters);
     checkRequiredContext(o.context, requiredContext);
-    if (o.version < formatVersion2) {
-      // Legacy: the Argon2id output is the AEAD key, with no commitment.
-      final key = _deriveKey(password, o.salt, o.parameters, o.aead.keyLength);
-      try {
-        return _open(o.aead, key, o.nonce, o.ciphertext, o.aad);
-      } finally {
-        zeroize(key);
-      }
-    }
     final secret = _deriveKey(password, o.salt, o.parameters, _secretLength);
     final CommittedKey committed;
     try {
@@ -270,31 +249,23 @@ final class PasswordProtection {
         _ctx,
         _purpose,
         secret,
-        o.h0!,
+        o.h0,
         o.aead.keyLength,
       );
     } finally {
       zeroize(secret);
     }
     try {
-      if (!committed.matches(o.commitment!)) {
+      if (!committed.matches(o.commitment)) {
         throw const DecryptionFailedException();
       }
-      return _open(o.aead, committed.key, o.nonce, o.ciphertext, o.aad);
+      final pt = _ctx
+          .aead(o.aead)
+          .open(committed.key, o.nonce, o.ciphertext, o.aad);
+      if (pt == null) throw const DecryptionFailedException();
+      return pt;
     } finally {
       committed.destroy();
     }
-  }
-
-  Uint8List _open(
-    AeadAlgorithm aead,
-    Uint8List key,
-    Uint8List nonce,
-    Uint8List ciphertext,
-    Uint8List aad,
-  ) {
-    final pt = _ctx.aead(aead).open(key, nonce, ciphertext, aad);
-    if (pt == null) throw const DecryptionFailedException();
-    return pt;
   }
 }

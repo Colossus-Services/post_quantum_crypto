@@ -3,8 +3,7 @@
 ///
 /// For each recipient: `(enc, ss) = KEM.Encap(pkR)`, then an HPKE context is
 /// derived with HKDF-SHA-384 from `ss` and
-/// `info = "post_quantum_crypto/v<version>/<purpose>/wrap" || u16 kemId || keyId`
-/// (`<version>` is the object's format version), and the
+/// `info = "post_quantum_crypto/v1/<purpose>/wrap" || u16 kemId || keyId`, and the
 /// DEK is sealed with `aad = headerHash`. The KEM shared secret is therefore
 /// never used directly as an AEAD key, the wrapping key is unique per
 /// encapsulation (so its single nonce is never reused), and the wrap is bound
@@ -18,7 +17,6 @@ import 'package:meta/meta.dart';
 import '../algorithms/algorithms.dart';
 import '../context.dart';
 import '../encoding/bytes.dart';
-import '../encoding/canonical.dart';
 import '../errors.dart';
 import '../hpke/hpke.dart';
 import '../keys/key_metadata.dart';
@@ -169,15 +167,13 @@ final class KeyWrapper {
     aead: _ctx.aead(aead),
   );
 
-  /// The HPKE info string; its label carries the object's format [version].
-  Uint8List _info(int version, KemAlgorithm kem, KeyId keyId) =>
+  Uint8List _info(KemAlgorithm kem, KeyId keyId) =>
       (ByteWriter()
-            ..raw(utf8Bytes('post_quantum_crypto/v$version/$_purpose/wrap'))
+            ..raw(utf8Bytes('post_quantum_crypto/v1/$_purpose/wrap'))
             ..u16(kem.id)
             ..raw(keyId.bytes))
           .toBytes();
 
-  /// Wraps [dek] for [recipient] in an object of the current format version.
   RecipientRecord wrap(
     EncryptionPublicKey recipient,
     Uint8List dek,
@@ -188,10 +184,10 @@ final class KeyWrapper {
     final rnd = _ctx.randomBytes(kem.encapsulationRandomLength);
     final encap = _ctx.kem(kem).encapsulate(recipient.bytes, rnd);
     zeroize(rnd);
-    final hpke = _suite(kem, aead).keySchedule(
-      encap.sharedSecret,
-      _info(formatVersion2, kem, recipient.keyId),
-    );
+    final hpke = _suite(
+      kem,
+      aead,
+    ).keySchedule(encap.sharedSecret, _info(kem, recipient.keyId));
     zeroize(encap.sharedSecret);
     try {
       return RecipientRecord(
@@ -206,13 +202,11 @@ final class KeyWrapper {
   }
 
   /// Returns the DEK, or `null` when the record does not authenticate.
-  /// [version] is the format version of the object holding [record].
   Uint8List? unwrap(
     RecipientRecord record,
     EncryptionPrivateKey key,
     Uint8List headerHash,
     AeadAlgorithm aead,
-    int version,
   ) {
     // Outside the try: a destroyed key is a caller error, not a decryption
     // failure.
@@ -226,7 +220,7 @@ final class KeyWrapper {
     final hpke = _suite(
       record.kem,
       aead,
-    ).keySchedule(ss, _info(version, record.kem, record.keyId));
+    ).keySchedule(ss, _info(record.kem, record.keyId));
     zeroize(ss);
     try {
       return hpke.open(headerHash, record.wrappedKey);

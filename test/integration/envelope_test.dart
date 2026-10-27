@@ -307,27 +307,20 @@ void main() {
     });
 
     test('unknown version and type are rejected', () {
-      for (final version in [0, 3, 0xff]) {
-        expect(
-          () => engine.parseEnvelope(Uint8List.fromList(bytes)..[4] = version),
-          throwsA(isA<UnsupportedFormatException>()),
-        );
-      }
-      // Version 1 is legacy: rejected by default, and a v2 body relabelled
-      // as v1 does not open even with legacy reading enabled (no downgrade
-      // to the non-committing format).
-      final downgraded = Uint8List.fromList(bytes)..[4] = 1;
-      expect(
-        () => engine.parseEnvelope(downgraded),
-        throwsA(isA<UnsupportedFormatException>()),
-      );
+      // Version 1 (package 1.x) is not read either, with or without
+      // acceptLegacyFormats.
       final legacy = engine.withPolicy(
         SecurityPolicy.standard.copyWith(acceptLegacyFormats: true),
       );
-      expect(
-        () => legacy.decryptBytes(downgraded, privateKey: alice.privateKey),
-        throwsA(isA<PostQuantumCryptoException>()),
-      );
+      for (final version in [0, 1, 3, 0xff]) {
+        final other = Uint8List.fromList(bytes)..[4] = version;
+        for (final e in [engine, legacy]) {
+          expect(
+            () => e.parseEnvelope(other),
+            throwsA(isA<UnsupportedFormatException>()),
+          );
+        }
+      }
       expect(
         () => engine.parseEnvelope(Uint8List.fromList(bytes)..[5] = 9),
         throwsA(isA<UnsupportedFormatException>()),

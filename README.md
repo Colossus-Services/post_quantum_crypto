@@ -204,7 +204,8 @@ that key signed the bytes. Decide separately whether that key is a trusted,
 current signer:
 
 ```dart
-final trust = TrustStore([releaseKey]);
+// Expiry is judged by the engine's policy clock.
+final trust = engine.createTrustStore([releaseKey]);
 final key = trust.lookup(detached.signerKeyId);
 if (key == null) throw 'unknown signer';
 final v = engine.verifyDetached(content, signature: detached, publicKey: key);
@@ -384,7 +385,11 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
 ## Formats and interoperability
 
 - [doc/FORMATS.md](doc/FORMATS.md) specifies every binary format. All are
-  versioned (`PQCR` + version + type), strictly parsed and bounded.
+  versioned (`PQCR` + version + type), strictly parsed and bounded. The
+  current format is version 2: envelopes, streams and password objects are
+  **key-committing**, so every recipient decrypts the same plaintext
+  ([doc/FORMAT_V2.md](doc/FORMAT_V2.md)). Objects from package 1.x
+  (format 1) are not read.
 - **Standard and interoperable:** FIPS 203/204/205 raw keys and signatures,
   SPKI/PKCS#8 DER/PEM (tested against OpenSSL 3.6), and HPKE key wrapping
   (verified with draft-ietf-hpke-pq vectors).
