@@ -52,21 +52,23 @@ jobs:
       - name: dart pub publish --dry-run
         run: dart pub publish --dry-run
 
-  # The VM suite with coverage, in two shards of similar length partitioned
-  # by tag: the known-answer vectors, and the rest. Together with test_slow
-  # every test runs exactly once. Codecov merges the two uploads
-  # (codecov.yml: after_n_builds). The OpenSSL interop tests have their own
-  # job below.
+  # The VM suite with coverage, in four shards of similar length: the
+  # known-answer vectors and the rest (partitioned by tag), each split in
+  # two by `dart test` sharding. Together with test_slow every test runs
+  # exactly once. Codecov merges the four uploads (codecov.yml:
+  # after_n_builds). The OpenSSL interop tests have their own job below.
   test_vm:
     strategy:
       fail-fast: false
       matrix:
+        group: [vectors, core]
+        index: [0, 1]
         include:
-          - shard: vectors
+          - group: vectors
             selector: -t vectors -x slow -x interop
-          - shard: core
+          - group: core
             selector: -x vectors -x slow -x interop
-    name: test_vm (${{ matrix.shard }})
+    name: test_vm (${{ matrix.group }} ${{ matrix.index }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -75,7 +77,10 @@ jobs:
       - name: Install dependencies
         run: dart pub get
       - name: Run tests (VM)
-        run: dart test --platform vm ${{ matrix.selector }} --coverage=./coverage
+        run: >-
+          dart test --platform vm ${{ matrix.selector }}
+          --total-shards 2 --shard-index ${{ matrix.index }}
+          --coverage=./coverage
       - name: Generate coverage report
         run: |
           dart pub global activate coverage

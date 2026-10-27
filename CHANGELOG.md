@@ -37,8 +37,9 @@ Found by the new standards-conformance vectors (below):
 ### CI
 
 - Faster CI through parallel jobs:
-  - The VM suite runs in two coverage shards of similar length, partitioned
-    by tag (`vectors`, and the rest); Codecov waits for both uploads. The
+  - The VM suite runs in four coverage shards of similar length (the
+    `vectors` tag and the rest, each split in two); Codecov waits for all
+    uploads. The
     few `slow` tests run in their own job without coverage instrumentation,
     which slowed them several times over.
   - Lint and package checks are separate jobs, and the examples run
