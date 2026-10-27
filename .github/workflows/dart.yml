@@ -1,0 +1,111 @@
+name: Dart CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Dart version
+        run: |
+          dart --version
+          uname -a
+      - name: Install dependencies
+        run: dart pub get
+      - name: dart format
+        run: dart format -o none --set-exit-if-changed .
+      - name: dart analyze
+        run: dart analyze --fatal-infos --fatal-warnings .
+      - name: dependency_validator
+        run: dart run dependency_validator
+      - name: dart doc
+        run: dart doc --dry-run
+      - name: dart pub publish --dry-run
+        run: dart pub publish --dry-run
+
+  test_vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Install dependencies
+        run: dart pub get
+      # Everything except the OpenSSL interop tests (own job below).
+      - name: Run tests (VM)
+        run: dart test --platform vm -x interop --coverage=./coverage
+      - name: Generate coverage report
+        run: |
+          dart pub global activate coverage
+          dart pub global run coverage:format_coverage --packages=.dart_tool/package_config.json --report-on=lib --lcov -o ./coverage/lcov.info -i ./coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          directory: ./coverage/
+          flags: unittests
+          env_vars: OS,DART
+          fail_ci_if_error: false
+          verbose: true
+
+  # Platform-independent suite (embedded vectors, byte-identical
+  # serialization, workflows) compiled to JavaScript and to WebAssembly.
+  test_web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - uses: browser-actions/setup-chrome@v1
+      - name: Install dependencies
+        run: dart pub get
+      - name: Run tests (Chrome, dart2js)
+        run: dart test -p chrome test/browser
+      - name: Run tests (Chrome, dart2wasm)
+        run: dart test -p chrome -c dart2wasm test/browser
+
+  # Cross-implementation tests against OpenSSL >= 3.5 (ML-KEM, ML-DSA,
+  # SLH-DSA). Ubuntu runners ship OpenSSL 3.0, so Homebrew's OpenSSL 3 on
+  # macOS is used.
+  test_interop:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Install OpenSSL 3
+        run: |
+          brew install openssl@3
+          echo "OPENSSL=$(brew --prefix openssl@3)/bin/openssl" >> "$GITHUB_ENV"
+      - name: OpenSSL version
+        run: $OPENSSL version
+      - name: Install dependencies
+        run: dart pub get
+      # Fails (instead of skipping) when the OpenSSL found lacks ML-KEM.
+      - name: Run interop tests
+        run: dart test -t interop -r expanded
+        env:
+          QC_REQUIRE_OPENSSL: 'true'
+
+  # Other operating systems (path handling, file permissions, isolates).
+  test_os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Install dependencies
+        run: dart pub get
+      - name: Run tests
+        run: dart test -x interop -x slow

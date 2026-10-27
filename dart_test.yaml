@@ -1,0 +1,19 @@
+# Pure-Dart post-quantum operations are CPU-heavy; allow slow runners.
+timeout: 4x
+
+tags:
+  # Official known-answer vectors read from test/vectors/ (VM only: they are
+  # loaded with dart:io). test/browser/ carries an embedded subset for the web.
+  vectors:
+  # Cross-implementation tests against an OpenSSL >= 3.5 binary. They
+  # self-skip when no suitable OpenSSL is found (see test/interop/).
+  interop:
+  # Seeded mutation fuzzing of every parser.
+  fuzz:
+  # Long-running tests (large files, SLH-DSA signing).
+  slow:
+  # The `version` tag marks the test asserting quantumCryptoVersion matches
+  # pubspec.yaml (test/unit/version_test.dart).
+  version:
+  # Tests that run in browsers (dart2js and dart2wasm).
+  browser:
