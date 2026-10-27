@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [ main ]
 
+# A newer push to the same PR or branch supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job runs in parallel; the slowest one sets the wall time.
 jobs:
-  build:
+  # Formatting, static analysis and dependency hygiene.
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: dart-lang/setup-dart@v1
@@ -24,14 +32,40 @@ jobs:
         run: dart analyze --fatal-infos --fatal-warnings .
       - name: dependency_validator
         run: dart run dependency_validator
+
+  # What users get: API docs, the publishable package and the examples.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dart-lang/setup-dart@v1
+      - name: Install dependencies
+        run: dart pub get
+      # The examples are independent programs; run them concurrently.
       - name: Run examples
-        run: for f in example/*.dart; do echo "== $f"; dart run "$f"; done
+        run: |
+          ls example/*.dart | xargs -P 4 -I{} sh -c \
+            'dart run "{}" > /dev/null && echo "ok: {}" || { echo "FAILED: {}"; exit 255; }'
       - name: dart doc
         run: dart doc --dry-run
       - name: dart pub publish --dry-run
         run: dart pub publish --dry-run
 
+  # The VM suite with coverage, in two shards of similar length partitioned
+  # by tag (every test is in exactly one): the few `slow` tests, and all the
+  # rest. Codecov merges the two uploads (codecov.yml: after_n_builds).
+  # The OpenSSL interop tests have their own job below.
   test_vm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: slow
+            selector: -t slow -x interop
+          - shard: main
+            selector: -x slow -x interop
+    name: test_vm (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -39,9 +73,8 @@ jobs:
       - uses: dart-lang/setup-dart@v1
       - name: Install dependencies
         run: dart pub get
-      # Everything except the OpenSSL interop tests (own job below).
       - name: Run tests (VM)
-        run: dart test --platform vm -x interop --coverage=./coverage
+        run: dart test --platform vm ${{ matrix.selector }} --coverage=./coverage
       - name: Generate coverage report
         run: |
           dart pub global activate coverage
@@ -59,13 +92,13 @@ jobs:
 
   # Platform-independent suite (embedded vectors, byte-identical
   # serialization, workflows) compiled to JavaScript and to WebAssembly.
+  # Chrome is preinstalled on the Ubuntu runner image.
   test_web:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dart-lang/setup-dart@v1
-      - uses: browser-actions/setup-chrome@v1
       - name: Install dependencies
         run: dart pub get
       - name: Run tests (Chrome, dart2js)
@@ -96,7 +129,10 @@ jobs:
         env:
           QC_REQUIRE_OPENSSL: 'true'
 
-  # Other operating systems (path handling, file permissions, isolates).
+  # Other operating systems: the platform-sensitive tests (paths, file
+  # permissions, isolates). Known-answer vectors and fuzzing are pure Dart
+  # computation, identical on every OS, and already run on Linux and in
+  # browsers.
   test_os:
     strategy:
       fail-fast: false
@@ -110,4 +146,4 @@ jobs:
       - name: Install dependencies
         run: dart pub get
       - name: Run tests
-        run: dart test -x interop -x slow
+        run: dart test -x interop -x slow -x vectors -x fuzz

@@ -34,6 +34,17 @@ Found by the new standards-conformance vectors (below):
   `test/vectors/PROVENANCE.md` records them. Third-party vectors are no
   longer included in the published package (159 KB instead of 3 MB).
 
+### CI
+
+- Faster CI through parallel jobs:
+  - The VM suite runs in two coverage shards of similar length, partitioned
+    by tag (`slow`, and everything else); Codecov waits for both uploads.
+  - Lint and package checks are separate jobs, and the examples run
+    concurrently.
+  - The macOS/Windows jobs run only the platform-sensitive tests; vectors
+    and fuzzing already run on Linux and in browsers.
+  - A newer push to a PR cancels the running check.
+
 ## 2.0.1
 
 ### Fixed
