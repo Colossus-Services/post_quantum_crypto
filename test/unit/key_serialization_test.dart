@@ -166,6 +166,31 @@ void main() {
       expect(back.keyId, kp.keyId);
     });
 
+    test('SLH-DSA private key record and expanded import (no signing)', () {
+      const alg = SignatureAlgorithm.slhDsaShake128f;
+      final kp = engine.generateSigningKeyPair(algorithm: alg);
+      // The key record carries SLH-DSA's full secret key (expanded form).
+      final back =
+          engine.decodeKey(engine.encodeKey(kp.privateKey))
+              as SigningPrivateKey;
+      expect(back.keyId, kp.keyId);
+      expect(back.secretKey, kp.privateKey.secretKey);
+      // The public key inside the secret key must match one supplied.
+      final other = engine.generateSigningKeyPair(algorithm: alg);
+      expect(
+        () => engine.importSigningPrivateKeyExpanded(
+          kp.privateKey.secretKey,
+          publicKey: other.publicKey.bytes,
+          algorithm: alg,
+        ),
+        throwsA(isA<InvalidKeyException>()),
+      );
+      expect(
+        standardCryptoBackend.postQuantum.signature(alg).randomnessLength,
+        16,
+      );
+    });
+
     test('the ML-DSA key check refuses other algorithms', () {
       expect(
         () => mlDsaPublicKeyFromExpanded(

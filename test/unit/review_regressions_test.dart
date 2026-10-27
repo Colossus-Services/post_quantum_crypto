@@ -1,4 +1,5 @@
 /// Regression tests for the findings of the PR #1 and PR #3 code reviews.
+@Tags(['platform'])
 library;
 
 import 'dart:io';

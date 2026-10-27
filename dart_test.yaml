@@ -17,3 +17,7 @@ tags:
   version:
   # Tests that run in browsers (dart2js and dart2wasm).
   browser:
+  # Tests that touch the file system, file permissions, processes or
+  # isolates, so their behavior can differ by OS; CI runs these on macOS and
+  # Windows too.
+  platform:

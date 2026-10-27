@@ -53,18 +53,19 @@ jobs:
         run: dart pub publish --dry-run
 
   # The VM suite with coverage, in two shards of similar length partitioned
-  # by tag (every test is in exactly one): the few `slow` tests, and all the
-  # rest. Codecov merges the two uploads (codecov.yml: after_n_builds).
-  # The OpenSSL interop tests have their own job below.
+  # by tag: the known-answer vectors, and the rest. Together with test_slow
+  # every test runs exactly once. Codecov merges the two uploads
+  # (codecov.yml: after_n_builds). The OpenSSL interop tests have their own
+  # job below.
   test_vm:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - shard: slow
-            selector: -t slow -x interop
-          - shard: main
-            selector: -x slow -x interop
+          - shard: vectors
+            selector: -t vectors -x slow -x interop
+          - shard: core
+            selector: -x vectors -x slow -x interop
     name: test_vm (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -89,6 +90,20 @@ jobs:
           env_vars: OS,DART
           fail_ci_if_error: false
           verbose: true
+
+  # The few `slow` tests (large files, SLH-DSA signing), without coverage:
+  # instrumentation slows their hot loops several times over, and every
+  # line they reach is also covered by the shards above.
+  test_slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dart-lang/setup-dart@v1
+      - name: Install dependencies
+        run: dart pub get
+      - name: Run slow tests (VM)
+        run: dart test --platform vm -t slow -x interop
 
   # Platform-independent suite (embedded vectors, byte-identical
   # serialization, workflows) compiled to JavaScript and to WebAssembly.
@@ -129,9 +144,9 @@ jobs:
         env:
           QC_REQUIRE_OPENSSL: 'true'
 
-  # Other operating systems: the platform-sensitive tests (paths, file
-  # permissions, isolates). Known-answer vectors and fuzzing are pure Dart
-  # computation, identical on every OS, and already run on Linux and in
+  # Other operating systems: the `platform` tests (file system, file
+  # permissions, processes, isolates). Everything else is pure Dart
+  # computation, identical on every OS, and already runs on Linux and in
   # browsers.
   test_os:
     strategy:
@@ -146,4 +161,4 @@ jobs:
       - name: Install dependencies
         run: dart pub get
       - name: Run tests
-        run: dart test -x interop -x slow -x vectors -x fuzz
+        run: dart test -t platform -x interop -x slow

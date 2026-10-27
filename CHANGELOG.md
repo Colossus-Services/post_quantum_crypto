@@ -38,11 +38,14 @@ Found by the new standards-conformance vectors (below):
 
 - Faster CI through parallel jobs:
   - The VM suite runs in two coverage shards of similar length, partitioned
-    by tag (`slow`, and everything else); Codecov waits for both uploads.
+    by tag (`vectors`, and the rest); Codecov waits for both uploads. The
+    few `slow` tests run in their own job without coverage instrumentation,
+    which slowed them several times over.
   - Lint and package checks are separate jobs, and the examples run
     concurrently.
-  - The macOS/Windows jobs run only the platform-sensitive tests; vectors
-    and fuzzing already run on Linux and in browsers.
+  - The macOS/Windows jobs run only the tests tagged `platform` (file
+    system, permissions, processes, isolates); everything else is pure Dart
+    computation and already runs on Linux and in browsers.
   - A newer push to a PR cancels the running check.
 
 ## 2.0.1

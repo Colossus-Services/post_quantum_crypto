@@ -1,3 +1,6 @@
+@Tags(['platform'])
+library;
+
 import 'dart:io';
 
 import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';

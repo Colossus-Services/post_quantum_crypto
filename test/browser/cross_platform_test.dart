@@ -172,14 +172,13 @@ void main() {
     test('expanded private keys: public key recomputed, PCT', () {
       // ML-DSA recomputes t = A·s1 + s2 (NTT arithmetic that must be exact
       // with JavaScript numbers); ML-KEM runs its pairwise-consistency test.
+      final seeded = deterministicEngine(7);
       for (final alg in [
         SignatureAlgorithm.mlDsa44,
         SignatureAlgorithm.mlDsa65,
         SignatureAlgorithm.mlDsa87,
       ]) {
-        final kp = deterministicEngine(7).generateSigningKeyPair(
-          algorithm: alg,
-        );
+        final kp = seeded.generateSigningKeyPair(algorithm: alg);
         final der = engine.exportPrivateKeyDer(
           kp.privateKey,
           form: PrivateKeyDerForm.expanded,
