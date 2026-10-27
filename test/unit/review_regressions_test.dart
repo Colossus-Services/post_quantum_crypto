@@ -211,6 +211,28 @@ void main() {
       });
     }
 
+    test('backup includes a key copied to another entry once', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateSigningKeyPair();
+      await store.putPair(a);
+      final other = '${'cd' * 32}.key';
+      await storage.write(other, (await storage.read('${a.keyId.hex}.key'))!);
+      final backup = await store.backup(
+        'backup passphrase',
+        parameters: fastArgon,
+      );
+      final restored = KeyStore(engine, InMemoryKeyStorage());
+      expect(await restored.restore(backup, 'backup passphrase'), [a.keyId]);
+      // The private half is the only signing entry; revoke still works.
+      await storage.delete('${a.keyId.hex}.pub');
+      await store.revoke(a.keyId, reason: 'test');
+      expect(
+        (await store.get(a.keyId, private: true))!.metadata.isRevoked,
+        isTrue,
+      );
+    });
+
     test('backup skips an undecodable entry only with onSkipped', () async {
       final storage = InMemoryKeyStorage();
       final store = KeyStore(engine, storage);
@@ -551,6 +573,32 @@ void main() {
       // The failed revoke left the stored key readable.
       expect((await store.get(ok.keyId, private: true))!.keyId, ok.keyId);
     });
+  });
+
+  test('invalid UTF-8 in a stored label is malformed', () {
+    final record = engine.encodeKey(
+      engine
+          .generateEncryptionKeyPair(metadata: const KeyMetadata(label: 'LBL!'))
+          .publicKey,
+    );
+    final at = String.fromCharCodes(record).indexOf('LBL!');
+    expect(at, greaterThan(0));
+    final bad = Uint8List.fromList(record)..setRange(at, at + 2, [0xff, 0xfe]);
+    expect(() => engine.decodeKey(bad), throwsA(isA<MalformedDataException>()));
+  });
+
+  test('key state getters', () {
+    final enc = engine.generateEncryptionKeyPair();
+    expect(enc.privateKey.isDestroyed, isFalse);
+    enc.privateKey.destroy();
+    expect(enc.privateKey.isDestroyed, isTrue);
+    final sig = engine.generateSigningKeyPair();
+    expect(sig.privateKey.hasSeed, isTrue);
+    final expanded = engine.importSigningPrivateKeyExpanded(
+      sig.privateKey.secretKey,
+      publicKey: sig.publicKey.bytes,
+    );
+    expect(expanded.hasSeed, isFalse);
   });
 
   test('an out-of-range metadata date is malformed, not a RangeError', () {
