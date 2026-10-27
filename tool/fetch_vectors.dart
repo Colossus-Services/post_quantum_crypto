@@ -60,6 +60,30 @@ Future<void> main() async {
         g['signatureInterface'] == 'external' && g['preHash'] == 'pure',
   );
 
+  // FIPS 205: only the SHAKE parameter sets are exposed; external/pure only.
+  // sigGen is limited to the hedged "f" sets ("s" signing is very slow in
+  // pure Dart).
+  await _acvpFile(
+    'SLH-DSA-sigVer-FIPS205',
+    'acvp_slhdsa_sigver.json',
+    perGroup: 4,
+    groupFilter: (g) =>
+        '${g['parameterSet']}'.contains('SHAKE') &&
+        g['signatureInterface'] == 'external' &&
+        g['preHash'] == 'pure',
+  );
+  await _acvpFile(
+    'SLH-DSA-sigGen-FIPS205',
+    'acvp_slhdsa_siggen.json',
+    perGroup: 2,
+    groupFilter: (g) =>
+        '${g['parameterSet']}'.contains('SHAKE') &&
+        '${g['parameterSet']}'.endsWith('f') &&
+        g['deterministic'] == false &&
+        g['signatureInterface'] == 'external' &&
+        g['preHash'] == 'pure',
+  );
+
   // Wycheproof.
   await _wycheproofFile('hkdf_sha384_test.json');
   await _wycheproofFile('hkdf_sha256_test.json');

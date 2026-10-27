@@ -78,12 +78,6 @@ final class QuantumCryptoEngine {
 
   SecurityPolicy get policy => ctx.policy;
 
-  @internal
-  KeyFactory get keyFactory => _keys;
-
-  @internal
-  EnvelopeService get envelopeService => _envelopes;
-
   /// Returns an engine with the same backend and a different [policy].
   QuantumCryptoEngine withPolicy(SecurityPolicy policy) =>
       QuantumCryptoEngine._(CryptoContext(backend, policy, ctx.random));
@@ -342,9 +336,6 @@ final class QuantumCryptoEngine {
     onProgress: onProgress,
     cancel: cancel,
   );
-
-  @internal
-  StreamService get streamService => _streams;
 
   // ---------------------------------------------------------------------------
   // Hybrid key establishment
@@ -690,9 +681,6 @@ final class QuantumCryptoEngine {
     SignedManifest manifest, {
     required SigningPublicKey publicKey,
   }) => _signed.verifyManifest(manifest, publicKey);
-
-  @internal
-  SignedObjectService get signedObjects => _signed;
 
   static Uint8List _signatureContext(List<int> context) {
     if (context.length > 255) {

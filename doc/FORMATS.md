@@ -221,3 +221,15 @@ transcript = bytes16 protocol || bytes16 initiatorId || bytes16 responderId ||
 
 Interoperability with OpenSSL 3.5+ for all three standardized families is
 covered by `test/interop/openssl_test.dart`.
+
+## Published test vectors
+
+[`test/vectors/quantum_crypto_v1.json`](../test/vectors/quantum_crypto_v1.json)
+contains, for the formats above, deterministic example objects together with
+the key seeds needed to open them: an envelope with ML-KEM-768 and X-Wing
+recipients, a ChaCha20-Poly1305 envelope, a stream with 256-byte chunks, raw
+and detached ML-DSA-65 signatures, a signed manifest, a hybrid message with
+its session key, a key record and a password-protected key. An independent
+implementation of this specification should decrypt and verify all of them.
+`format_vectors_test.dart` checks that this package still reproduces them
+byte for byte; any difference is a format change.
