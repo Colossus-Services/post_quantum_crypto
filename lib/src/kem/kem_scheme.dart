@@ -38,6 +38,9 @@ abstract interface class KemScheme {
   /// decapsulation key imported from another implementation).
   KemKeyMaterial fromExpandedSecretKey(Uint8List expanded);
 
+  /// Validates an encapsulation key without encapsulating.
+  void validatePublicKey(Uint8List publicKey);
+
   /// Derandomized encapsulation; [randomness] has
   /// [KemAlgorithm.encapsulationRandomLength] bytes.
   RawEncapsulation encapsulate(Uint8List publicKey, Uint8List randomness);
@@ -102,6 +105,10 @@ final class MlKemScheme implements KemScheme {
   }
 
   @override
+  void validatePublicKey(Uint8List publicKey) =>
+      _kem.validatePublicKey(publicKey);
+
+  @override
   RawEncapsulation encapsulate(Uint8List publicKey, Uint8List randomness) {
     if (publicKey.length != algorithm.publicKeyLength) {
       throw const InvalidKeyException('ML-KEM public key has wrong length');
@@ -156,6 +163,15 @@ final class XWingScheme implements KemScheme {
       throw const InvalidKeyException(
         'X-Wing private keys are only exchanged in seed form',
       );
+
+  @override
+  void validatePublicKey(Uint8List publicKey) {
+    if (publicKey.length != 1216) {
+      throw const InvalidKeyException('X-Wing public key has wrong length');
+    }
+    // Every 32-byte string is a valid X25519 public key.
+    _mlKem.validatePublicKey(Uint8List.sublistView(publicKey, 0, 1184));
+  }
 
   @override
   RawEncapsulation encapsulate(Uint8List publicKey, Uint8List randomness) {

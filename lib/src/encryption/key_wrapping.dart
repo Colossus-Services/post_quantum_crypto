@@ -115,6 +115,42 @@ void checkRecipientsForEncryption(
   }
 }
 
+/// Selects the record addressed to [key] and applies the decryption-side
+/// policy checks. Record key ids are unique (enforced by [readRecipients]).
+@internal
+RecipientRecord selectRecipient(
+  CryptoContext ctx,
+  List<RecipientRecord> records,
+  EncryptionPrivateKey key,
+) {
+  for (final r in records) {
+    if (r.keyId == key.keyId) {
+      if (r.kem != key.algorithm) throw const DecryptionFailedException();
+      ctx.policy.checkKem(r.kem);
+      ctx.policy.checkKeyMetadata(key.metadata, KeyUsage.decrypt);
+      return r;
+    }
+  }
+  throw const KeyNotFoundException('No recipient entry for this key');
+}
+
+/// Fails unless every entry of [required] is present in [actual] with the
+/// same value. Context is public, so this check reveals nothing secret.
+@internal
+void checkRequiredContext(
+  Map<String, String> actual,
+  Map<String, String>? required,
+) {
+  if (required == null) return;
+  for (final e in required.entries) {
+    if (actual[e.key] != e.value) {
+      throw ContextMismatchException(
+        'Authenticated context does not match for "${e.key}"',
+      );
+    }
+  }
+}
+
 /// HPKE-based DEK wrapping.
 @internal
 final class KeyWrapper {

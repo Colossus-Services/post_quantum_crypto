@@ -19,6 +19,12 @@ abstract final class DerTag {
   /// `[0] IMPLICIT OCTET STRING` (the `seed` CHOICE of the private-key
   /// formats).
   static const int contextPrimitive0 = 0x80;
+
+  /// `[0]` constructed (PKCS#8 `attributes`).
+  static const int contextConstructed0 = 0xa0;
+
+  /// `[1] IMPLICIT BIT STRING` (PKCS#8 v2 `publicKey`).
+  static const int contextPrimitive1 = 0x81;
 }
 
 /// Encodes one TLV.

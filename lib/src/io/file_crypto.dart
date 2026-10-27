@@ -1,12 +1,14 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../encoding/bytes.dart' show constantTimeEquals;
 import '../encoding/text_encoding.dart';
 import '../encryption/streaming.dart';
 import '../engine.dart';
 import '../errors.dart';
 import '../keys/key_store.dart';
 import '../keys/keys.dart';
+import '../random/secure_random.dart';
 import '../signatures/signed_objects.dart';
 
 /// File helpers (Dart VM / Flutter native only).
@@ -135,7 +137,8 @@ extension QuantumCryptoFiles on QuantumCryptoEngine {
         throw SignatureVerificationException('Missing file: ${e.path}');
       }
       final actual = await manifestEntryForFile(baseDir, e.path);
-      if (actual.size != e.size || !_eq(actual.digest, e.digest)) {
+      if (actual.size != e.size ||
+          !constantTimeEquals(actual.digest, e.digest)) {
         throw SignatureVerificationException('File differs: ${e.path}');
       }
     }
@@ -144,21 +147,14 @@ extension QuantumCryptoFiles on QuantumCryptoEngine {
 
   static String _join(String base, String rel) =>
       '$base${Platform.pathSeparator}${rel.replaceAll('/', Platform.pathSeparator)}';
-
-  static bool _eq(Uint8List a, Uint8List b) {
-    if (a.length != b.length) return false;
-    var d = 0;
-    for (var i = 0; i < a.length; i++) {
-      d |= a[i] ^ b[i];
-    }
-    return d == 0;
-  }
 }
 
 /// [KeyStorage] in a directory, one file per key.
 ///
-/// Files are created with owner-only permissions on POSIX systems
-/// (best-effort `chmod 600`). This is ordinary file storage: it is not
+/// Files are restricted to owner-only permissions on POSIX systems
+/// (`chmod 600`, applied before any key bytes are written). Temporary
+/// files are named `<key>.<random>.tmp` and are not listed as keys. This is
+/// ordinary file storage: it is not
 /// hardware-backed and offers no protection against other code running as
 /// the same user. Combine it with a [KeyStore] password for private keys.
 final class FileKeyStorage implements KeyStorage {
@@ -166,8 +162,10 @@ final class FileKeyStorage implements KeyStorage {
 
   FileKeyStorage(this.directory);
 
+  static final _keyName = RegExp(r'^[0-9a-f]{64}\.(key|pub)$');
+
   File _file(String name) {
-    if (!RegExp(r'^[0-9a-f]{64}\.(key|pub)$').hasMatch(name)) {
+    if (!_keyName.hasMatch(name)) {
       throw const InvalidInputException('Invalid key file name');
     }
     return File('${directory.path}${Platform.pathSeparator}$name');
@@ -183,12 +181,39 @@ final class FileKeyStorage implements KeyStorage {
   Future<void> write(String name, Uint8List data) async {
     await directory.create(recursive: true);
     final f = _file(name);
-    final tmp = File('${f.path}.tmp');
-    await tmp.writeAsBytes(data, flush: true);
-    if (!Platform.isWindows) {
-      await Process.run('chmod', ['600', tmp.path]);
+    // A unique temporary name: concurrent writes of the same key cannot
+    // clobber each other's partial file.
+    final suffix = TextEncoding.toHex(SystemSecureRandom.instance.nextBytes(8));
+    final tmp = File('${f.path}.$suffix.tmp');
+    try {
+      // Restrict permissions before any key bytes are written.
+      await tmp.writeAsBytes(const [], flush: true);
+      await _restrictPermissions(tmp);
+      await tmp.writeAsBytes(data, flush: true);
+      await tmp.rename(f.path);
+    } catch (_) {
+      if (await tmp.exists()) await tmp.delete();
+      rethrow;
     }
-    await tmp.rename(f.path);
+  }
+
+  /// `chmod 600` on POSIX systems. Fails closed if chmod runs and reports an
+  /// error. Skipped where there is no chmod (Windows; the iOS sandbox, where
+  /// `Process` is unavailable and app containers are already private).
+  static Future<void> _restrictPermissions(File file) async {
+    if (Platform.isWindows || Platform.isIOS) return;
+    final ProcessResult r;
+    try {
+      r = await Process.run('chmod', ['600', file.path]);
+    } on ProcessException {
+      // No chmod binary (some Android images): app storage is private.
+      return;
+    }
+    if (r.exitCode != 0) {
+      throw const UnsupportedPlatformException(
+        'Could not restrict key file permissions',
+      );
+    }
   }
 
   @override
@@ -202,7 +227,8 @@ final class FileKeyStorage implements KeyStorage {
     if (!await directory.exists()) return [];
     return [
       await for (final e in directory.list())
-        if (e is File) e.uri.pathSegments.last,
+        if (e is File && _keyName.hasMatch(e.uri.pathSegments.last))
+          e.uri.pathSegments.last,
     ]..sort();
   }
 }

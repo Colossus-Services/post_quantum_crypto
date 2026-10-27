@@ -552,7 +552,7 @@ final class QuantumCryptoEngine {
   }) {
     ctx.policy.checkSignature(privateKey.algorithm);
     ctx.policy.checkKeyMetadata(privateKey.metadata, KeyUsage.sign);
-    final ctxBytes = _signatureContext(context);
+    final ctxBytes = checkSignatureContext(context);
     final prim = ctx.signature(privateKey.algorithm);
     final rnd = ctx.randomBytes(prim.randomnessLength);
     return prim.sign(
@@ -575,7 +575,7 @@ final class QuantumCryptoEngine {
   }) {
     ctx.policy.checkSignature(publicKey.algorithm);
     ctx.policy.checkKeyMetadata(publicKey.metadata, KeyUsage.verify);
-    final ctxBytes = _signatureContext(context);
+    final ctxBytes = checkSignatureContext(context);
     return ctx
         .signature(publicKey.algorithm)
         .verify(
@@ -681,11 +681,4 @@ final class QuantumCryptoEngine {
     SignedManifest manifest, {
     required SigningPublicKey publicKey,
   }) => _signed.verifyManifest(manifest, publicKey);
-
-  static Uint8List _signatureContext(List<int> context) {
-    if (context.length > 255) {
-      throw const InvalidInputException('Signature context exceeds 255 bytes');
-    }
-    return Uint8List.fromList(context);
-  }
 }

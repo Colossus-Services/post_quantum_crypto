@@ -38,7 +38,8 @@ Future<void> main(List<String> args) async {
     );
     final decMs = sw.elapsedMilliseconds;
     stdout.writeln(
-      'size=${mib}MiB baseRss=${base >> 20}MiB '
+      'size=${mib}MiB peakRssBytes=${ProcessInfo.maxRss} '
+      'baseRss=${base >> 20}MiB '
       'peakRss=${ProcessInfo.maxRss >> 20}MiB '
       'encrypt=${encMs}ms (${(mib * 1000 / encMs).toStringAsFixed(1)} MiB/s) '
       'decrypt=${decMs}ms (${(mib * 1000 / decMs).toStringAsFixed(1)} MiB/s)',

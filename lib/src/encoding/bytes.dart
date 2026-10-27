@@ -203,6 +203,26 @@ final class ByteReader {
     return out;
   }
 
+  /// Reads exactly [length] bytes as a view into the input (no copy). Only
+  /// for inputs the parser owns.
+  Bytes view(int length) {
+    _need(length);
+    final out = Uint8List.sublistView(_data, _offset, _offset + length);
+    _offset += length;
+    return out;
+  }
+
+  /// A u32 length prefix followed by that many bytes, returned as a view.
+  Bytes view32({required int max}) {
+    final length = u32();
+    if (length > max) {
+      throw const ResourceLimitExceededException(
+        'Encoded field exceeds its size limit',
+      );
+    }
+    return view(length);
+  }
+
   Bytes bytes8({int max = 0xff}) => _prefixed(u8(), max);
 
   Bytes bytes16({int max = 0xffff}) => _prefixed(u16(), max);

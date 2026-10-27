@@ -4,6 +4,7 @@ library;
 import 'dart:typed_data';
 
 import '../encoding/bytes.dart';
+import '../encoding/text_encoding.dart';
 import '../engine.dart';
 import '../errors.dart';
 import 'key_metadata.dart';
@@ -123,26 +124,30 @@ final class KeyStore {
     }
   }
 
-  Future<QuantumKey> _require(KeyId id, {bool private = false}) async {
-    final k = await get(id, private: private);
-    if (k == null) throw const KeyNotFoundException('Key not in store');
-    return k;
+  /// The public half of a stored key, derived from the private half when
+  /// only that one is stored.
+  Future<QuantumKey> _requirePublic(KeyId id) async {
+    final pub = await get(id);
+    if (pub != null) return pub;
+    return switch (await get(id, private: true)) {
+      EncryptionPrivateKey k => k.publicKey,
+      SigningPrivateKey k => k.publicKey,
+      _ => throw const KeyNotFoundException('Key not in store'),
+    };
   }
 
-  /// Ids of all stored keys.
+  static final _namePattern = RegExp(r'^([0-9a-f]{64})\.(key|pub)$');
+
+  /// Ids of all stored keys. Storage entries that are not key files are
+  /// ignored.
   Future<List<KeyId>> list() async {
     final ids = <String>{};
     for (final n in await storage.list()) {
-      final dot = n.indexOf('.');
-      if (dot == 64) ids.add(n.substring(0, 64));
+      final m = _namePattern.firstMatch(n);
+      if (m != null) ids.add(m.group(1)!);
     }
-    return [for (final h in ids) KeyId(_fromHex(h))];
+    return [for (final h in ids) KeyId(TextEncoding.fromHex(h))];
   }
-
-  static Uint8List _fromHex(String h) => Uint8List.fromList([
-    for (var i = 0; i < h.length; i += 2)
-      int.parse(h.substring(i, i + 2), radix: 16),
-  ]);
 
   /// Deletes both halves of a key.
   Future<void> remove(KeyId id) async {
@@ -163,7 +168,7 @@ final class KeyStore {
   /// Marks a key as revoked. With the default policy, revoked keys are
   /// refused for every operation.
   Future<void> revoke(KeyId id, {String? reason, DateTime? at}) async {
-    await _require(id);
+    await _requirePublic(id);
     await _updateMetadata(
       id,
       (m) => m.copyWith(
@@ -173,11 +178,17 @@ final class KeyStore {
     );
   }
 
+  /// The usages of a replacement key: unrestricted if the old key was,
+  /// otherwise the old restriction widened to the full role ([roles]), so
+  /// rotating an already-retired key still yields a working key.
+  static Set<KeyUsage> _rotatedUsages(Set<KeyUsage> old, Set<KeyUsage> roles) =>
+      old.isEmpty ? const {} : {...old, ...roles};
+
   /// Rotates an encryption key: generates a replacement (same algorithm)
   /// whose metadata records `replaces`, and restricts the old key to
   /// decryption only so existing data stays readable.
   Future<EncryptionKeyPair> rotateEncryptionKey(KeyId oldId) async {
-    final old = await _require(oldId);
+    final old = await _requirePublic(oldId);
     if (old is! EncryptionPublicKey) {
       throw const InvalidKeyException('Not an encryption key');
     }
@@ -186,7 +197,10 @@ final class KeyStore {
       metadata: KeyMetadata(
         createdAt: engine.policy.now(),
         replaces: oldId,
-        usages: old.metadata.usages,
+        usages: _rotatedUsages(old.metadata.usages, {
+          KeyUsage.encrypt,
+          KeyUsage.decrypt,
+        }),
         label: old.metadata.label,
       ),
     );
@@ -197,7 +211,7 @@ final class KeyStore {
 
   /// Rotates a signing key: the old key is restricted to verification.
   Future<SigningKeyPair> rotateSigningKey(KeyId oldId) async {
-    final old = await _require(oldId);
+    final old = await _requirePublic(oldId);
     if (old is! SigningPublicKey) {
       throw const InvalidKeyException('Not a signing key');
     }
@@ -206,7 +220,10 @@ final class KeyStore {
       metadata: KeyMetadata(
         createdAt: engine.policy.now(),
         replaces: oldId,
-        usages: old.metadata.usages,
+        usages: _rotatedUsages(old.metadata.usages, {
+          KeyUsage.sign,
+          KeyUsage.verify,
+        }),
         label: old.metadata.label,
       ),
     );

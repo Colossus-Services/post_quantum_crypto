@@ -49,10 +49,14 @@ void main() {
             final kp = scheme.fromExpandedSecretKey(hex(t['dk']));
             expect(scheme.decapsulate(kp.secret, hex(t['c'])), hex(t['k']));
           case 'encapsulationKeyCheck':
+            // The stand-alone check and encapsulation must agree.
+            void validate() => scheme.validatePublicKey(hex(t['ek']));
             void encaps() => scheme.encapsulate(hex(t['ek']), Uint8List(32));
             if (t['testPassed'] == true) {
+              validate();
               encaps();
             } else {
+              expect(validate, throwsA(isA<InvalidKeyException>()));
               expect(encaps, throwsA(isA<InvalidKeyException>()));
             }
           case 'decapsulationKeyCheck':

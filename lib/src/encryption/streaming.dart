@@ -40,7 +40,7 @@ import '../errors.dart';
 import '../keys/key_metadata.dart';
 import '../keys/keys.dart';
 import '../providers/primitives.dart';
-import 'envelope.dart' show EnvelopeRecipient, checkRequiredContext;
+import 'envelope.dart' show EnvelopeRecipient;
 import 'key_wrapping.dart';
 
 /// Default plaintext bytes per chunk.
@@ -50,8 +50,23 @@ const int _saltLength = 32;
 const int _noncePrefixLength = 7;
 const int _maxChunks = 0xffffffff;
 
-/// Upper bound for the header of a stream being decrypted.
-const int _maxStreamHeaderBytes = 4 * 1024 * 1024;
+/// The largest header [StreamHeader.read] can accept under [ctx]'s limits:
+/// fixed fields, a maximal context map and the maximum number of recipients
+/// with the largest KEM ciphertext. Any header the encryptor can produce
+/// under the same policy fits.
+int _maxStreamHeaderBytes(CryptoContext ctx) {
+  final l = ctx.policy.limits;
+  final keyBytes = l.maxContextKeyBytes.clamp(0, 0xff);
+  final maxCt = KemAlgorithm.values
+      .map((k) => k.ciphertextLength)
+      .reduce((a, b) => a > b ? a : b);
+  const fixed = 6 + 2 + 2 + 4 + _saltLength + _noncePrefixLength;
+  final map =
+      2 + l.maxContextEntries * (1 + keyBytes + 4 + l.maxContextValueBytes);
+  final recipients =
+      2 + l.maxRecipients * (2 + KeyId.length + maxCt + dekLength + 16);
+  return fixed + map + recipients;
+}
 
 /// Receives the number of plaintext bytes processed so far.
 typedef ProgressCallback = void Function(int bytesProcessed);
@@ -154,12 +169,22 @@ final class _ByteQueue {
 
   void add(List<int> data) {
     if (_end + data.length > _buf.length) {
-      final needed = length + data.length;
-      final next = Uint8List(needed * 2 < 1024 ? 1024 : needed * 2)
-        ..setRange(0, length, _buf, _start);
-      _buf = next;
-      _end = length;
+      final live = length;
+      final needed = live + data.length;
+      if (needed <= _buf.length) {
+        // Compact in place, then wipe the vacated tail.
+        _buf.setRange(0, live, _buf, _start);
+        _buf.fillRange(live, _end, 0);
+      } else {
+        // Grow; the old buffer may hold plaintext, so wipe it before
+        // dropping it.
+        final next = Uint8List(needed * 2 < 1024 ? 1024 : needed * 2)
+          ..setRange(0, live, _buf, _start);
+        zeroize(_buf);
+        _buf = next;
+      }
       _start = 0;
+      _end = live;
     }
     _buf.setRange(_end, _end + data.length, data);
     _end += data.length;
@@ -167,11 +192,13 @@ final class _ByteQueue {
 
   Uint8List view() => Uint8List.sublistView(_buf, _start, _end);
 
-  /// Removes and returns the first [n] bytes (a copy).
+  /// Removes and returns the first [n] bytes (a copy). The consumed region
+  /// is wiped.
   Uint8List take(int n) {
     final out = Uint8List.fromList(
       Uint8List.sublistView(_buf, _start, _start + n),
     );
+    _buf.fillRange(_start, _start + n, 0);
     _start += n;
     return out;
   }
@@ -240,26 +267,30 @@ final class StreamService {
       ..raw(_ctx.randomBytes(_noncePrefixLength));
     CanonicalMap.write(w, context, _ctx.mapLimits);
     final wrapHash = _ctx.sha384(w.toBytes());
-    final dek = _ctx.randomBytes(dekLength);
-    final Uint8List key;
-    final StreamHeader header;
-    try {
-      writeRecipients(w, [
-        for (final r in recipients) _wrapper.wrap(r, dek, wrapHash, aead),
-      ]);
-      final headerBytes = w.toBytes();
-      header = StreamHeader.read(_ctx, headerBytes);
-      key = _streamKey(dek, header);
-      yield headerBytes;
-    } finally {
-      zeroize(dek);
-    }
-
     final cipher = _ctx.aead(aead);
     final queue = _ByteQueue();
     var counter = 0;
     var processed = 0;
+    Uint8List? key;
+    // The key's lifetime is covered by one try/finally, so it is wiped even
+    // if the subscriber cancels right after receiving the header.
     try {
+      final StreamHeader header;
+      final Uint8List headerBytes;
+      final dek = _ctx.randomBytes(dekLength);
+      try {
+        writeRecipients(w, [
+          for (final r in recipients) _wrapper.wrap(r, dek, wrapHash, aead),
+        ]);
+        headerBytes = w.toBytes();
+        header = StreamHeader.read(_ctx, headerBytes);
+        key = _streamKey(dek, header);
+      } finally {
+        zeroize(dek);
+      }
+      yield headerBytes;
+      final streamKey = key;
+
       await for (final data in input) {
         cancel?.throwIfCancelled();
         queue.add(data);
@@ -271,7 +302,7 @@ final class StreamService {
           }
           final pt = queue.take(chunkSize);
           yield cipher.seal(
-            key,
+            streamKey,
             _nonce(header.noncePrefix, counter++, false),
             pt,
             header.headerHash,
@@ -284,7 +315,7 @@ final class StreamService {
       cancel?.throwIfCancelled();
       final pt = queue.take(queue.length);
       yield cipher.seal(
-        key,
+        streamKey,
         _nonce(header.noncePrefix, counter, true),
         pt,
         header.headerHash,
@@ -314,56 +345,83 @@ final class StreamService {
     void Function(StreamHeader header)? onHeader,
   }) async* {
     final queue = _ByteQueue();
+    final maxHeader = _maxStreamHeaderBytes(_ctx);
     StreamHeader? header;
     Uint8List? key;
     AeadCipher? cipher;
     var counter = 0;
     var processed = 0;
+    // Header parsing is retried only after the buffer has doubled (or the
+    // cap or end of input is reached), keeping total work linear.
+    var nextAttempt = 0;
+
+    bool tryHeader({required bool atEnd}) {
+      if (!atEnd && queue.length < nextAttempt && queue.length < maxHeader) {
+        return false;
+      }
+      final StreamHeader parsed;
+      try {
+        parsed = parseStrictIncremental(
+          () => StreamHeader.read(_ctx, queue.view()),
+        );
+      } on InsufficientDataError {
+        if (atEnd) {
+          throw const MalformedDataException('Truncated stream header');
+        }
+        if (queue.length >= maxHeader) {
+          throw const ResourceLimitExceededException('Stream header too large');
+        }
+        nextAttempt = queue.length * 2;
+        return false;
+      }
+      header = parsed;
+      queue.take(parsed.length);
+      onHeader?.call(parsed);
+      key = _openHeader(parsed, privateKey, requiredContext);
+      cipher = _ctx.aead(parsed.aead);
+      return true;
+    }
+
+    /// Opens every buffered chunk that is followed by more data (and is
+    /// therefore not the final one).
+    List<Uint8List> drainFull() {
+      final h = header!;
+      final chunkLen = h.chunkSize + h.aead.tagLength;
+      final out = <Uint8List>[];
+      while (queue.length > chunkLen) {
+        if (counter >= _maxChunks) throw const DecryptionFailedException();
+        final pt = cipher!.open(
+          key!,
+          _nonce(h.noncePrefix, counter++, false),
+          queue.take(chunkLen),
+          h.headerHash,
+        );
+        if (pt == null) throw const DecryptionFailedException();
+        processed += pt.length;
+        out.add(pt);
+      }
+      return out;
+    }
+
     try {
       await for (final data in input) {
         cancel?.throwIfCancelled();
         queue.add(data);
-        if (header == null) {
-          final StreamHeader parsed;
-          try {
-            parsed = parseStrictIncremental(
-              () => StreamHeader.read(_ctx, queue.view()),
-            );
-          } on InsufficientDataError {
-            if (queue.length > _maxStreamHeaderBytes) {
-              throw const ResourceLimitExceededException(
-                'Stream header too large',
-              );
-            }
-            continue;
-          }
-          header = parsed;
-          queue.take(parsed.length);
-          onHeader?.call(parsed);
-          key = _openHeader(parsed, privateKey, requiredContext);
-          cipher = _ctx.aead(parsed.aead);
-        }
-        final h = header;
-        final chunkLen = h.chunkSize + h.aead.tagLength;
-        while (queue.length > chunkLen) {
-          if (counter >= _maxChunks) throw const DecryptionFailedException();
-          final pt = cipher!.open(
-            key!,
-            _nonce(h.noncePrefix, counter++, false),
-            queue.take(chunkLen),
-            h.headerHash,
-          );
-          if (pt == null) throw const DecryptionFailedException();
-          processed += pt.length;
+        if (header == null && !tryHeader(atEnd: false)) continue;
+        for (final pt in drainFull()) {
           onProgress?.call(processed);
           yield pt;
         }
       }
       cancel?.throwIfCancelled();
-      final h = header;
-      if (h == null) {
-        throw const MalformedDataException('Truncated stream header');
+      if (header == null) {
+        tryHeader(atEnd: true);
+        for (final pt in drainFull()) {
+          onProgress?.call(processed);
+          yield pt;
+        }
       }
+      final h = header!;
       if (queue.length < h.aead.tagLength) {
         throw const DecryptionFailedException();
       }
@@ -393,16 +451,7 @@ final class StreamService {
   ) {
     _ctx.policy.checkAead(h.aead);
     checkRequiredContext(h.context, requiredContext);
-    RecipientRecord? record;
-    for (final r in h.records) {
-      if (r.keyId == key.keyId) record = r;
-    }
-    if (record == null) {
-      throw const KeyNotFoundException('No recipient entry for this key');
-    }
-    if (record.kem != key.algorithm) throw const DecryptionFailedException();
-    _ctx.policy.checkKem(record.kem);
-    _ctx.policy.checkKeyMetadata(key.metadata, KeyUsage.decrypt);
+    final record = selectRecipient(_ctx, h.records, key);
     final dek = _wrapper.unwrap(record, key, h.wrapHash, h.aead);
     if (dek == null) throw const DecryptionFailedException();
     try {

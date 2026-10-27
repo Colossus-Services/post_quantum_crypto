@@ -85,10 +85,8 @@ final class KeyFactory {
       );
     }
     final b = Uint8List.fromList(bytes);
-    // Run the FIPS 203 encapsulation-key check up front.
-    _ctx
-        .kem(algorithm)
-        .encapsulate(b, Uint8List(algorithm.encapsulationRandomLength));
+    // FIPS 203 encapsulation-key check up front (no encapsulation needed).
+    _ctx.kem(algorithm).validatePublicKey(b);
     return EncryptionPublicKey.internal(
       algorithm: algorithm,
       bytes: b,

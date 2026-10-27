@@ -133,6 +133,19 @@ final class DetachedSignature {
       });
 }
 
+/// The largest detached signature any supported algorithm can produce under
+/// [ctx]'s metadata limits, so every artifact the library creates also parses.
+int _maxDetachedSignatureBytes(CryptoContext ctx) {
+  final l = ctx.policy.limits;
+  final keyBytes = l.maxContextKeyBytes.clamp(0, 0xff);
+  final maxSig = SignatureAlgorithm.values
+      .map((a) => a.signatureLength)
+      .reduce((a, b) => a > b ? a : b);
+  final map =
+      2 + l.maxContextEntries * (1 + keyBytes + 4 + l.maxContextValueBytes);
+  return 6 + 2 + KeyId.length + 1 + 255 + map + 1 + 48 + 8 + 4 + maxSig;
+}
+
 /// Content together with its detached signature (object type 0x04).
 ///
 /// Layout: `header || bytes32 detachedSignature || u64 length || content`.
@@ -157,7 +170,10 @@ final class SignedArtifact {
       parseStrict(() {
         final r = ByteReader(bytes);
         readHeader(r, ObjectType.signedArtifact);
-        final sig = DetachedSignature.parse(ctx, r.bytes32(max: 1024 * 1024));
+        final sig = DetachedSignature.parse(
+          ctx,
+          r.bytes32(max: _maxDetachedSignatureBytes(ctx)),
+        );
         final length = r.u64();
         if (length > ctx.policy.limits.maxSignedContentBytes) {
           throw const ResourceLimitExceededException('Content too large');
@@ -366,6 +382,15 @@ final class VerifiedSignature {
   );
 }
 
+/// Validates a FIPS 204/205 context string (≤ 255 bytes) and copies it.
+@internal
+Uint8List checkSignatureContext(List<int> context) {
+  if (context.length > 255) {
+    throw const InvalidInputException('Signature context exceeds 255 bytes');
+  }
+  return Uint8List.fromList(context);
+}
+
 /// Running SHA-384 + length over streamed content.
 @internal
 final class ContentDigester {
@@ -423,12 +448,8 @@ final class SignedObjectService {
     if (!ok) throw const SignatureVerificationException();
   }
 
-  static Uint8List _checkContext(List<int> context) {
-    if (context.length > 255) {
-      throw const InvalidInputException('Signature context exceeds 255 bytes');
-    }
-    return Uint8List.fromList(context);
-  }
+  static Uint8List _checkContext(List<int> context) =>
+      checkSignatureContext(context);
 
   DetachedSignature signDigest(
     SigningPrivateKey key,

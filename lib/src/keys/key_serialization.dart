@@ -316,9 +316,54 @@ final class KeyCodec {
     final oid = algId.expect(DerTag.oid);
     algId.expectEnd();
     final privateKey = seq.expect(DerTag.octetString);
-    // Optional attributes [0] and publicKey [1] (v2) are ignored.
+    // RFC 5958: [0] attributes (ignored) and, in v2 only, [1] publicKey
+    // (checked below). Nothing else may follow.
+    Uint8List? embeddedPublicKey;
+    if (!seq.isAtEnd) {
+      DerElement? e = seq.read();
+      if (e.tag == DerTag.contextConstructed0) {
+        e = seq.isAtEnd ? null : seq.read();
+      }
+      if (e != null) {
+        if (e.tag != DerTag.contextPrimitive1) {
+          throw const MalformedDataException('Unexpected PKCS#8 element');
+        }
+        if (version[0] != 1) {
+          throw const MalformedDataException('publicKey requires PKCS#8 v2');
+        }
+        if (e.value.isEmpty || e.value[0] != 0) {
+          throw const MalformedDataException('Invalid BIT STRING');
+        }
+        embeddedPublicKey = e.value.sublist(1);
+      }
+      seq.expectEnd();
+    }
     final alg = _algorithmForOid(oid);
+    final key = _decodePrivateKey(alg, privateKey, embeddedPublicKey);
+    final derived = switch (key) {
+      EncryptionPrivateKey k => k.publicKey.bytes,
+      SigningPrivateKey k => k.publicKey.bytes,
+      _ => throw const InvalidKeyException('Not a private key'),
+    };
+    if (embeddedPublicKey != null &&
+        !constantTimeEquals(derived, embeddedPublicKey)) {
+      switch (key) {
+        case EncryptionPrivateKey k:
+          k.destroy();
+        case SigningPrivateKey k:
+          k.destroy();
+        default:
+      }
+      throw const InvalidKeyException('Embedded public key does not match');
+    }
+    return key;
+  }
 
+  QuantumKey _decodePrivateKey(
+    Object alg,
+    Uint8List privateKey,
+    Uint8List? embeddedPublicKey,
+  ) {
     if (alg is SignatureAlgorithm && alg.isSlhDsa) {
       return _factory.signingPrivateKeyFromExpanded(
         alg,
@@ -369,6 +414,15 @@ final class KeyCodec {
         return key;
       case SignatureAlgorithm a:
         if (seed == null) {
+          if (embeddedPublicKey != null) {
+            // v2 carries the public key, which tr = H(pk) is checked against.
+            return _factory.signingPrivateKeyFromExpanded(
+              a,
+              expanded!,
+              embeddedPublicKey,
+              const KeyMetadata(),
+            );
+          }
           throw const InvalidKeyException(
             'Expanded-only ML-DSA keys need the public key; '
             'use importSigningPrivateKeyExpanded',

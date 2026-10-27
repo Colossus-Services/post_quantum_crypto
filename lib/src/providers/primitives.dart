@@ -91,6 +91,10 @@ abstract interface class KemPrimitive {
 
   int get ciphertextLength;
 
+  /// FIPS 203 §7.2 encapsulation-key check (length and modulus check), without
+  /// encapsulating. Throws `InvalidKeyException`.
+  void validatePublicKey(Uint8List publicKey);
+
   /// `ML-KEM.KeyGen_internal(d, z)` from the 64-byte seed `d || z`.
   RawKeyPair generateFromSeed(Uint8List seed);
 

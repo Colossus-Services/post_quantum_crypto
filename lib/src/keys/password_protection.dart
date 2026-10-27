@@ -29,6 +29,7 @@ import '../algorithms/algorithms.dart';
 import '../context.dart';
 import '../encoding/bytes.dart';
 import '../encoding/canonical.dart';
+import '../encryption/key_wrapping.dart' show checkRequiredContext;
 import '../errors.dart';
 
 /// Argon2id cost parameters.
@@ -208,15 +209,7 @@ final class PasswordProtection {
     // Policy and parameter bounds before the expensive derivation.
     _ctx.policy.checkAead(o.aead);
     checkParameters(o.parameters);
-    if (requiredContext != null) {
-      for (final e in requiredContext.entries) {
-        if (o.context[e.key] != e.value) {
-          throw ContextMismatchException(
-            'Authenticated context does not match for "${e.key}"',
-          );
-        }
-      }
-    }
+    checkRequiredContext(o.context, requiredContext);
     final key = _deriveKey(password, o.salt, o.parameters, o.aead.keyLength);
     try {
       final pt = _ctx.aead(o.aead).open(key, o.nonce, o.ciphertext, o.aad);

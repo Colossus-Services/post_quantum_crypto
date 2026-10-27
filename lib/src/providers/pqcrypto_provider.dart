@@ -92,6 +92,27 @@ final class _PqKem implements KemPrimitive {
   @override
   int get ciphertextLength => _kem.params.ciphertextBytes;
 
+  /// pqcrypto keeps its check private, so it is reimplemented here: every
+  /// 12-bit coefficient of `ByteDecode12(ek[0:384k])` must be below
+  /// q = 3329, which is equivalent to `ByteEncode12(ByteDecode12(ek)) == ek`.
+  @override
+  void validatePublicKey(Uint8List publicKey) {
+    if (publicKey.length != publicKeyLength) {
+      throw const InvalidKeyException('ML-KEM public key has wrong length');
+    }
+    final packed = publicKeyLength - 32;
+    for (var i = 0; i < packed; i += 3) {
+      final b0 = publicKey[i], b1 = publicKey[i + 1], b2 = publicKey[i + 2];
+      final c0 = b0 | ((b1 & 0x0f) << 8);
+      final c1 = (b1 >> 4) | (b2 << 4);
+      if (c0 >= 3329 || c1 >= 3329) {
+        throw const InvalidKeyException(
+          'ML-KEM public key fails modulus check',
+        );
+      }
+    }
+  }
+
   @override
   RawKeyPair generateFromSeed(Uint8List seed) {
     if (seed.length != 64) {

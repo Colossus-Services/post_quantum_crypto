@@ -9,7 +9,6 @@ library;
 import 'dart:typed_data';
 
 import '../encoding/bytes.dart';
-import '../errors.dart';
 import '../providers/primitives.dart';
 
 final Uint8List _hpkeV1 = utf8Bytes('HPKE-v1');
@@ -130,12 +129,5 @@ final class HpkeContext {
     zeroize(key);
     zeroize(baseNonce);
     zeroize(exporterSecret);
-  }
-}
-
-/// Validates an HPKE info/aad length bound before use.
-void checkHpkeLength(Uint8List value) {
-  if (value.length > 0xffff) {
-    throw const ResourceLimitExceededException('HPKE input too long');
   }
 }

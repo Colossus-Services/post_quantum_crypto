@@ -126,35 +126,25 @@ void main() {
     'memory does not scale with file size',
     () async {
       const mib = 1024 * 1024;
-      Future<int> roundTrip(int sizeMiB) async {
-        final src = File(p('big.bin'));
-        final sink = src.openWrite();
-        final block = Uint8List(mib);
-        for (var i = 0; i < sizeMiB; i++) {
-          block[0] = i;
-          sink.add(block);
-          await sink.flush();
-        }
-        await sink.close();
-        await engine.encryptFile(
-          src.path,
-          p('big.qc'),
-          recipients: [kp.publicKey],
-        );
-        await engine.decryptFile(
-          p('big.qc'),
-          p('big.out'),
-          privateKey: kp.privateKey,
-        );
-        expect(File(p('big.out')).lengthSync(), sizeMiB * mib);
-        return ProcessInfo.maxRss;
+      // Each size runs in its own process: `dart test` runs suites
+      // concurrently in one VM, so this process's peak RSS would include
+      // other suites' allocations.
+      Future<int> peakRss(int sizeMiB) async {
+        final r = await Process.run(Platform.resolvedExecutable, [
+          'run',
+          'tool/memory_probe.dart',
+          '$sizeMiB',
+        ]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        final m = RegExp(r'peakRssBytes=(\d+)').firstMatch('${r.stdout}');
+        expect(m, isNotNull, reason: '${r.stdout}');
+        return int.parse(m!.group(1)!);
       }
 
-      // Warm up (JIT, GC heap sizing) with a small file, then process a file
-      // 8x larger: peak RSS must not grow with the size (an in-memory
-      // implementation would need ≥ 2 × 128 MiB more).
-      final small = await roundTrip(16);
-      final large = await roundTrip(128);
+      // An in-memory implementation would need ≥ 2 × 112 MiB more for the
+      // 8x larger file; a streaming one stays flat.
+      final small = await peakRss(16);
+      final large = await peakRss(128);
       expect(
         large - small,
         lessThan(48 * mib),

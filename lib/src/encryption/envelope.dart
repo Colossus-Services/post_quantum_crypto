@@ -100,14 +100,15 @@ final class EncryptedEnvelope {
   /// The canonical binary serialization (a copy).
   Bytes toBytes() => Uint8List.fromList(_bytes);
 
-  /// Parses [bytes]. Throws [MalformedDataException],
-  /// [UnsupportedFormatException], [UnsupportedAlgorithmException] or
-  /// [ResourceLimitExceededException]; never allocates more than
-  /// [CryptoContext]'s limits allow.
+  /// Parses [data], **taking ownership** of it: callers pass a buffer nobody
+  /// else mutates (the engine copies caller input exactly once). The
+  /// ciphertext is a view into [data], not a copy. Throws
+  /// [MalformedDataException], [UnsupportedFormatException],
+  /// [UnsupportedAlgorithmException] or [ResourceLimitExceededException];
+  /// never allocates more than [CryptoContext]'s limits allow.
   @internal
-  static EncryptedEnvelope parse(CryptoContext ctx, Uint8List bytes) =>
+  static EncryptedEnvelope parse(CryptoContext ctx, Uint8List data) =>
       parseStrict(() {
-        final data = Uint8List.fromList(bytes);
         final r = ByteReader(data);
         readHeader(r, ObjectType.envelope);
         final kdf = KdfAlgorithm.fromId(r.u16());
@@ -124,7 +125,7 @@ final class EncryptedEnvelope {
         );
         final nonce = r.fixed(aead.nonceLength);
         final payloadAad = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
-        final ct = r.bytes32(
+        final ct = r.view32(
           max: ctx.policy.limits.maxEnvelopePayloadBytes + aead.tagLength,
         );
         if (ct.length < aead.tagLength) {
@@ -201,10 +202,7 @@ final class EnvelopeService {
   ) {
     _ctx.policy.checkAead(envelope.aead);
     checkRequiredContext(envelope.context, requiredContext);
-    final record = _findRecord(envelope.records, key);
-    _ctx.policy.checkKem(record.kem);
-    _ctx.policy.checkKeyMetadata(key.metadata, KeyUsage.decrypt);
-
+    final record = selectRecipient(_ctx, envelope.records, key);
     final dek = _wrapper.unwrap(
       record,
       key,
@@ -237,36 +235,6 @@ final class EnvelopeService {
       return encrypt(pt, recipients, envelope.context, envelope.aead);
     } finally {
       zeroize(pt);
-    }
-  }
-
-  static RecipientRecord _findRecord(
-    List<RecipientRecord> records,
-    EncryptionPrivateKey key,
-  ) {
-    for (final r in records) {
-      if (r.keyId == key.keyId) {
-        if (r.kem != key.algorithm) throw const DecryptionFailedException();
-        return r;
-      }
-    }
-    throw const KeyNotFoundException('No recipient entry for this key');
-  }
-}
-
-/// Fails unless every entry of [required] is present in [actual] with the
-/// same value. Context is public, so this check reveals nothing secret.
-@internal
-void checkRequiredContext(
-  Map<String, String> actual,
-  Map<String, String>? required,
-) {
-  if (required == null) return;
-  for (final e in required.entries) {
-    if (actual[e.key] != e.value) {
-      throw ContextMismatchException(
-        'Authenticated context does not match for "${e.key}"',
-      );
     }
   }
 }
