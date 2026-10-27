@@ -1,0 +1,7 @@
+# Configuration for `dart run dependency_validator`.
+#
+# `meta` is used for `@internal`/`@visibleForTesting` annotations that the
+# analyzer reads at compile time; the validator can miss such usages, so it is
+# allowlisted here.
+ignore:
+  - meta

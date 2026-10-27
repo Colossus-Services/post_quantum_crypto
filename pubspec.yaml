@@ -1,0 +1,30 @@
+name: quantum_crypto
+description: >-
+  High-level post-quantum cryptography for Dart: ML-KEM envelopes,
+  multi-recipient and streaming encryption, ML-DSA signatures, X-Wing hybrid
+  key establishment, Argon2id-protected keys and key management. Pure Dart,
+  built on pqcrypto and PointyCastle behind swappable provider interfaces.
+version: 1.0.0
+repository: https://github.com/Colossus-Services/quantum_crypto
+issue_tracker: https://github.com/Colossus-Services/quantum_crypto/issues
+
+topics:
+  - cryptography
+  - post-quantum
+  - encryption
+  - signatures
+  - security
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  cryptography: ^2.9.0
+  meta: ^1.19.0
+  pointycastle: ^4.0.0
+  pqcrypto: ^0.4.3
+
+dev_dependencies:
+  dependency_validator: ^5.1.0
+  lints: ^6.1.0
+  test: ^1.33.0
