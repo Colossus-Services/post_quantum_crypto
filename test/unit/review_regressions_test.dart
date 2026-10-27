@@ -309,6 +309,14 @@ void main() {
       expect(dir.listSync(), isEmpty);
     });
 
+    test('an invalid name fails the Future, not the call', () async {
+      final s = FileKeyStorage(dir);
+      final write = s.write('../evil.key', Uint8List(1));
+      final delete = s.delete('../evil.key');
+      await expectLater(write, throwsA(isA<InvalidInputException>()));
+      await expectLater(delete, throwsA(isA<InvalidInputException>()));
+    });
+
     test('stray files are not listed as keys', () async {
       File('${dir.path}/notes.txt').writeAsStringSync('x');
       File('${dir.path}/${'ab' * 32}.key.0011.tmp').writeAsStringSync('x');
@@ -333,6 +341,44 @@ void main() {
           throwsA(isA<InvalidInputException>()),
         );
       }
+    });
+
+    test('passwords are only hashed, so 1.0.0 behaviour is kept', () {
+      // Lone surrogates encode as U+FFFD, as in 1.0.0: data sealed under
+      // such a password must stay openable.
+      final sealed = engine.encryptWithPassword(
+        bytesOf('m'),
+        'pass\uD800word-long',
+        parameters: const Argon2idParameters(
+          memoryKiB: 8 * 1024,
+          iterations: 1,
+          parallelism: 1,
+        ),
+      );
+      expect(
+        engine.decryptWithPassword(sealed, 'pass\uD800word-long'),
+        bytesOf('m'),
+      );
+    });
+
+    test('unpaired surrogates in key labels and manifest paths', () {
+      expect(
+        () => engine.encodeKey(
+          engine
+              .generateEncryptionKeyPair(
+                metadata: const KeyMetadata(label: 'x\uDC00'),
+              )
+              .publicKey,
+        ),
+        throwsA(isA<InvalidInputException>()),
+      );
+      final signer = engine.generateSigningKeyPair();
+      expect(
+        () => engine.createSignedManifest([
+          engine.manifestEntry('a\uD800b', [1]),
+        ], privateKey: signer.privateKey),
+        throwsA(isA<InvalidInputException>()),
+      );
     });
 
     test('valid surrogate pairs still round-trip', () {

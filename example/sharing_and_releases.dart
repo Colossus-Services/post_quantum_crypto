@@ -117,11 +117,17 @@ Future<void> main() async {
   print(
     'manifest ${verified.metadata['version']}: ${received.entries.length} files',
   );
-  // Each file is then checked against its entry.
+  // Each file is then checked against its entry. For files on disk,
+  // `verifyManifestFiles` (post_quantum_crypto_io.dart) does all of this.
   for (final entry in received.entries) {
-    final actual = engine.manifestEntry(entry.path, files[entry.path]!);
+    final content = files[entry.path];
+    if (content == null) {
+      print('  ${entry.path}: MISSING');
+      continue;
+    }
+    final actual = engine.manifestEntry(entry.path, content);
     final ok =
-        TextEncoding.toHex(actual.digest) == TextEncoding.toHex(entry.digest);
+        actual.size == entry.size && _sameDigest(actual.digest, entry.digest);
     print('  ${entry.path}: ${ok ? 'ok' : 'MODIFIED'}');
   }
 
@@ -137,4 +143,14 @@ Future<void> main() async {
     publicKey: releaseKey.publicKey,
   );
   print('update feed: ${utf8.decode(opened2.content)}');
+}
+
+/// Compares two digests in constant time.
+bool _sameDigest(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff == 0;
 }

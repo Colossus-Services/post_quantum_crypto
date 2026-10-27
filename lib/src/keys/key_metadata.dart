@@ -200,7 +200,7 @@ final class KeyMetadata {
   static const int _maxTextBytes = 4096;
 
   static Bytes _text(String? s, String what) {
-    final b = utf8Bytes(s ?? '');
+    final b = utf8BytesStrict(s ?? '');
     if (b.length > _maxTextBytes) {
       throw ResourceLimitExceededException(
         '$what exceeds $_maxTextBytes bytes',
@@ -213,7 +213,8 @@ final class KeyMetadata {
     // u64 values can exceed DateTime's range (±8.64e15 ms).
     try {
       return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
-    } on RangeError {
+    } on ArgumentError {
+      // RangeError on the VM; a plain ArgumentError on some web targets.
       throw const MalformedDataException('Key metadata date out of range');
     }
   }

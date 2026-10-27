@@ -8,18 +8,24 @@
   unrecoverable.
 - **Key metadata**: a date beyond `DateTime`'s range in a key record raises
   `MalformedDataException` instead of a raw `RangeError`.
-- **Strings with unpaired UTF-16 surrogates** (in contexts, signed metadata,
-  labels, manifest paths, passwords, hybrid identities) are rejected with
-  `InvalidInputException`. Before, they were silently encoded as U+FFFD, so
-  two distinct context keys could produce an envelope that no recipient
-  could open, and decoding did not reproduce the input.
+- **Strings with unpaired UTF-16 surrogates** in fields that are decoded
+  back (authenticated contexts, signed metadata, key labels and revocation
+  reasons, manifest paths) are rejected with `InvalidInputException`.
+  Before, they were silently encoded as U+FFFD, so two distinct context keys
+  could produce an envelope that no recipient could open, and decoding did
+  not reproduce the input. Passwords and hybrid transcript identities are
+  only hashed and keep the 1.0.0 encoding, so existing data stays readable.
 - **`KeyStore.get`** checks that the stored entry holds the requested key
   (key id, and private vs public); a swapped or misplaced file raises
   `InvalidKeyException` instead of returning a different key.
 - **`FileKeyStorage.delete`** waits for pending writes of the same key, so
-  a delete issued after a write is no longer undone by that write.
-- **Stream decryption progress**: `onProgress` reports each chunk as it is
-  emitted instead of the total of a batch of chunks ahead of time.
+  a delete issued after a write is no longer undone by that write. An
+  invalid key name fails the returned Future instead of throwing
+  synchronously.
+- **Stream decryption** opens chunks one at a time as they are emitted, so
+  a large input event no longer holds all its plaintext at once, and
+  `onProgress` reports each chunk as it is emitted instead of a batch total
+  ahead of time.
 
 ### Documentation
 

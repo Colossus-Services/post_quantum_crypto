@@ -277,7 +277,7 @@ final class SignedManifest {
     if (entries.length > limits.maxManifestEntries) {
       throw const ResourceLimitExceededException('Too many manifest entries');
     }
-    final sorted = [for (final e in entries) (utf8Bytes(e.path), e)]
+    final sorted = [for (final e in entries) (utf8BytesStrict(e.path), e)]
       ..sort((a, b) => compareBytes(a.$1, b.$1));
     final w = ByteWriter();
     writeHeader(w, ObjectType.manifest);

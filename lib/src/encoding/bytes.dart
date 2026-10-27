@@ -48,12 +48,17 @@ void zeroize(Uint8List? bytes) {
 Bytes immutableCopy(List<int> bytes) =>
     Uint8List.fromList(bytes).asUnmodifiableView();
 
-/// UTF-8 encodes [s].
+/// UTF-8 encodes [s]. An unpaired surrogate becomes U+FFFD, as with
+/// `utf8.encode`; use this for strings that are only hashed or derived from
+/// (passwords, labels), where 1.0.0 compatibility requires it.
+Bytes utf8Bytes(String s) => Uint8List.fromList(utf8.encode(s));
+
+/// UTF-8 encodes [s] for a field that is decoded back into a string.
 ///
 /// Throws [InvalidInputException] for an unpaired UTF-16 surrogate, which
-/// `utf8.encode` would silently replace with U+FFFD: distinct strings would
-/// then encode identically, and decoding would not reproduce the input.
-Bytes utf8Bytes(String s) {
+/// [utf8Bytes] would replace with U+FFFD: distinct strings would then encode
+/// identically, and decoding would not reproduce the input.
+Bytes utf8BytesStrict(String s) {
   for (var i = 0; i < s.length; i++) {
     final c = s.codeUnitAt(i);
     if (c < 0xd800 || c > 0xdfff) continue;

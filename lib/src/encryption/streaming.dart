@@ -384,12 +384,12 @@ final class StreamService {
       return true;
     }
 
-    /// Opens every buffered chunk that is followed by more data (and is
-    /// therefore not the final one).
-    List<Uint8List> drainFull() {
+    /// Opens, one at a time as they are consumed, the buffered chunks that
+    /// are followed by more data (and are therefore not the final one). Lazy,
+    /// so a large input event never holds more than one opened chunk.
+    Iterable<Uint8List> drainFull() sync* {
       final h = header!;
       final chunkLen = h.chunkSize + h.aead.tagLength;
-      final out = <Uint8List>[];
       while (queue.length > chunkLen) {
         if (counter >= _maxChunks) throw const DecryptionFailedException();
         final pt = cipher!.open(
@@ -399,9 +399,8 @@ final class StreamService {
           h.headerHash,
         );
         if (pt == null) throw const DecryptionFailedException();
-        out.add(pt);
+        yield pt;
       }
-      return out;
     }
 
     try {
@@ -409,7 +408,6 @@ final class StreamService {
         cancel?.throwIfCancelled();
         queue.add(data);
         if (header == null && !tryHeader(atEnd: false)) continue;
-        // Progress counts each chunk as it is emitted, not the whole batch.
         for (final pt in drainFull()) {
           processed += pt.length;
           onProgress?.call(processed);

@@ -194,7 +194,13 @@ final class FileKeyStorage implements KeyStorage {
 
   /// Runs [op] after every earlier write or delete of [name] has settled.
   Future<void> _enqueue(String name, Future<void> Function() op) {
-    _file(name); // validate before queueing
+    // Validate before queueing; report an invalid name as a failed Future,
+    // like the other KeyStorage methods.
+    try {
+      _file(name);
+    } catch (e, s) {
+      return Future.error(e, s);
+    }
     final previous = _pending[name] ?? Future<void>.value();
     final next = previous.catchError((Object _) {}).then((_) => op());
     _pending[name] = next;

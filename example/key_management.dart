@@ -68,6 +68,12 @@ Future<void> main() async {
     utf8.encode('app-1.2.0.tar.gz'),
     privateKey: releases.privateKey,
   );
+  // Verified while the key was still valid.
+  final verified = engine.verifyDetached(
+    utf8.encode('app-1.2.0.tar.gz'),
+    signature: artifact,
+    publicKey: releases.publicKey,
+  );
   await store.revoke(releases.keyId, reason: 'laptop lost');
   final revoked = await store.get(releases.keyId) as SigningPublicKey;
   print('revoked: ${revoked.metadata.revocationReason}');
@@ -82,9 +88,10 @@ Future<void> main() async {
   } on PolicyViolationException catch (e) {
     print('verify with revoked key: ${e.message}');
   }
-  // ...and a TrustStore holding the updated key reports it as revoked.
+  // ...and a TrustStore holding the updated key re-evaluates the earlier
+  // verification as revoked.
   final trust = TrustStore([revoked]);
-  print('trust lookup: ${trust.lookup(artifact.signerKeyId)?.metadata.label}');
+  print('trust decision now: ${trust.evaluate(verified)}');
 
   // --- Policies ----------------------------------------------------------------
   // `strict` requires NIST security category 3 or higher.

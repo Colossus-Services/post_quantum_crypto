@@ -67,7 +67,7 @@ abstract final class CanonicalMap {
   ) {
     final entries = [
       for (final e in map.entries)
-        MapEntry(utf8Bytes(e.key), utf8Bytes(e.value)),
+        MapEntry(utf8BytesStrict(e.key), utf8BytesStrict(e.value)),
     ]..sort((a, b) => compareBytes(a.key, b.key));
     return entries;
   }
@@ -78,17 +78,12 @@ abstract final class CanonicalMap {
     }
     final entries = _sortedEntries(map);
     w.u16(entries.length);
-    Uint8List? previous;
+    // Strict encoding is injective, so distinct keys stay distinct and
+    // sorted strictly ascending, as the reader requires.
     for (final e in entries) {
       if (e.key.isEmpty) {
         throw const InvalidInputException('Map keys must not be empty');
       }
-      // The reader requires strictly ascending keys; never write a map it
-      // would reject.
-      if (previous != null && compareBytes(previous, e.key) == 0) {
-        throw const InvalidInputException('Duplicate map key');
-      }
-      previous = e.key;
       if (e.key.length > limits.maxKeyBytes || e.key.length > 0xff) {
         throw const ResourceLimitExceededException('Map key too long');
       }
