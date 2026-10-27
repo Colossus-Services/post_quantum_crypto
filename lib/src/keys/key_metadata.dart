@@ -113,6 +113,7 @@ final class KeyMetadata {
 
   bool allows(KeyUsage usage) => usages.isEmpty || usages.contains(usage);
 
+  /// Returns a copy with some fields replaced. Throws like [checkLimits].
   KeyMetadata copyWith({
     DateTime? createdAt,
     DateTime? expiresAt,
@@ -129,7 +130,20 @@ final class KeyMetadata {
     usages: usages ?? this.usages,
     label: label ?? this.label,
     replaces: replaces ?? this.replaces,
-  );
+  )..checkLimits();
+
+  /// Checks that [label] and [revocationReason] can be stored: at most 4096
+  /// UTF-8 bytes each ([ResourceLimitExceededException]) and no unpaired
+  /// UTF-16 surrogates ([InvalidInputException]).
+  ///
+  /// The constructor is `const` and cannot check; every key checks its
+  /// metadata when it is created (generation, import, `withMetadata`), so an
+  /// invalid label fails where it is introduced rather than when the key is
+  /// later saved.
+  void checkLimits() {
+    _text(label, 'Key label');
+    _text(revocationReason, 'Revocation reason');
+  }
 
   /// Canonical encoding (part of the key-record format).
   ///

@@ -7,7 +7,6 @@ import 'package:post_quantum_crypto/src/encoding/canonical.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
-import 'key_serialization_test.dart' show fastArgon;
 
 void main() {
   group('raw key import', () {

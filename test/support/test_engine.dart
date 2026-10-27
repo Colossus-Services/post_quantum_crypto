@@ -56,3 +56,11 @@ Uint8List bytesOf(String s) => Uint8List.fromList(s.codeUnits);
 /// Returns a copy of [data] with bit [bit] of byte [index] flipped.
 Uint8List flip(Uint8List data, int index, [int bit = 0]) =>
     Uint8List.fromList(data)..[index] ^= 1 << bit;
+
+/// Small Argon2id parameters so the suite stays fast. They are inside the
+/// default [PasswordPolicy] bounds (minimum 8 MiB).
+const fastArgon = Argon2idParameters(
+  memoryKiB: 8 * 1024,
+  iterations: 1,
+  parallelism: 1,
+);

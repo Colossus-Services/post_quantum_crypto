@@ -4,6 +4,7 @@ library;
 import 'dart:typed_data';
 
 import '../encoding/bytes.dart';
+import '../encoding/canonical.dart' show ObjectType;
 import '../encoding/text_encoding.dart';
 import '../engine.dart';
 import '../errors.dart';
@@ -127,8 +128,7 @@ final class KeyStore {
       zeroize(data);
     }
     if (key.keyId != id || key.isPrivate != private) {
-      if (key case EncryptionPrivateKey k) k.destroy();
-      if (key case SigningPrivateKey k) k.destroy();
+      _destroy(key);
       throw const InvalidKeyException('Stored key does not match its entry');
     }
     return key;
@@ -245,33 +245,83 @@ final class KeyStore {
   static const _backupContext = {'type': 'post_quantum_crypto/key-backup'};
 
   /// Exports every stored key into one Argon2id-encrypted backup.
+  ///
+  /// Each storage entry is decoded on its own, and the key it holds is backed
+  /// up under that key's own id, whatever entry it was found in: a file moved
+  /// or copied over another key's name is still backed up (once), and
+  /// [restore] files it under its real name.
+  ///
+  /// A wrong store password fails the backup ([DecryptionFailedException]).
+  /// An entry that holds no valid key also fails it, unless [onSkipped] is
+  /// given: the entry is then left out and reported there, so a partial
+  /// backup is always an explicit choice.
   Future<Uint8List> backup(
     String backupPassword, {
     Argon2idParameters? parameters,
+    void Function(String entry, PostQuantumCryptoException error)? onSkipped,
   }) async {
-    final records = <Uint8List>[];
-    for (final id in await list()) {
-      for (final private in [false, true]) {
-        final k = await get(id, private: private);
-        if (k != null) records.add(engine.encodeKey(k));
-      }
-    }
-    final w = ByteWriter()..u32(records.length);
-    for (final r in records) {
-      w.bytes32(r);
-      zeroize(r);
-    }
-    final plain = w.toBytes();
+    final keys = <(KeyId, bool), QuantumKey>{};
     try {
-      return engine.encryptWithPassword(
-        plain,
-        backupPassword,
-        parameters: parameters,
-        context: _backupContext,
-      );
+      for (final name in await storage.list()) {
+        if (!_namePattern.hasMatch(name)) continue;
+        final data = await storage.read(name);
+        if (data == null) continue;
+        final QuantumKey key;
+        try {
+          key = _decodeEntry(data);
+        } on DecryptionFailedException {
+          rethrow; // wrong store password (or a tampered entry)
+        } on PostQuantumCryptoException catch (e) {
+          if (onSkipped == null) rethrow;
+          onSkipped(name, e);
+          continue;
+        } finally {
+          zeroize(data);
+        }
+        final slot = (key.keyId, key.isPrivate);
+        if (keys.containsKey(slot)) {
+          _destroy(key);
+        } else {
+          keys[slot] = key;
+        }
+      }
+      final w = ByteWriter()..u32(keys.length);
+      for (final k in keys.values) {
+        final r = engine.encodeKey(k);
+        w.bytes32(r);
+        zeroize(r);
+      }
+      final plain = w.toBytes();
+      try {
+        return engine.encryptWithPassword(
+          plain,
+          backupPassword,
+          parameters: parameters,
+          context: _backupContext,
+        );
+      } finally {
+        zeroize(plain);
+      }
     } finally {
-      zeroize(plain);
+      keys.values.forEach(_destroy);
     }
+  }
+
+  /// Decodes one storage entry by its content, not its name: a
+  /// password-protected key with the store password, anything else as a
+  /// plain key record.
+  QuantumKey _decodeEntry(Uint8List data) {
+    final password = _password;
+    final isProtected =
+        data.length > 5 && data[5] == ObjectType.passwordProtectedKey;
+    return password != null && isProtected
+        ? engine.importPrivateKeyWithPassword(data, password)
+        : engine.decodeKey(data);
+  }
+
+  static void _destroy(QuantumKey key) {
+    if (key case EncryptionPrivateKey k) k.destroy();
+    if (key case SigningPrivateKey k) k.destroy();
   }
 
   /// Restores keys from [backup] into this store. Returns the restored ids.

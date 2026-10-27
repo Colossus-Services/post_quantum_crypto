@@ -1,3 +1,26 @@
+## 2.0.1
+
+### Fixed
+
+- **Key labels and revocation reasons are checked where they are
+  introduced.** Before, a label over 4096 UTF-8 bytes (or with an unpaired
+  surrogate) was only rejected when the key was saved. Now key generation,
+  import, `withMetadata` and `KeyMetadata.copyWith` reject it. The new
+  `KeyMetadata.checkLimits` does the same check on demand. Behavior
+  change: a key with such a label can no longer be created even if it is
+  never saved.
+- **`KeyStore.backup` no longer fails on a misplaced key file.** Each
+  storage entry is decoded on its own and its key is backed up under its
+  real id, so a key file moved or copied over another key's name is still
+  backed up (once) and restored under the right name. An entry that holds
+  no valid key fails the backup as before, unless the new optional
+  `onSkipped` callback is given, in which case it is left out and reported
+  there. A wrong store password always fails the backup. Decrypted private
+  keys are destroyed once encoded.
+- **pub.dev:** shorter pubspec `description` (163 characters). pub.dev
+  requires 60–180 and scored the package 0/10 for "Provide a valid
+  pubspec.yaml".
+
 ## 2.0.0
 
 ### Breaking

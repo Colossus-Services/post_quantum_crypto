@@ -174,6 +174,110 @@ void main() {
       }
     });
 
+    for (final password in [null, 'store passphrase']) {
+      test('backup keeps a key moved to another entry '
+          '(password: ${password != null})', () async {
+        final storage = InMemoryKeyStorage();
+        final store = KeyStore(
+          engine,
+          storage,
+          password: password,
+          parameters: fastArgon,
+        );
+        final a = engine.generateEncryptionKeyPair();
+        final b = engine.generateSigningKeyPair();
+        await store.putPair(a);
+        await store.putPair(b);
+        // B's private key moved over A's private entry, and A's public
+        // record over B's public entry: each key now exists only under the
+        // other's name.
+        final bKey = (await storage.read('${b.keyId.hex}.key'))!;
+        final aPub = (await storage.read('${a.keyId.hex}.pub'))!;
+        await storage.write('${a.keyId.hex}.key', bKey);
+        await storage.delete('${b.keyId.hex}.key');
+        await storage.write('${b.keyId.hex}.pub', aPub);
+        await storage.delete('${a.keyId.hex}.pub');
+
+        final backup = await store.backup(
+          'backup passphrase',
+          parameters: fastArgon,
+        );
+        final restored = KeyStore(engine, InMemoryKeyStorage());
+        await restored.restore(backup, 'backup passphrase');
+        // Each key is restored under its own name.
+        expect(await restored.get(a.keyId), a.publicKey);
+        expect((await restored.get(b.keyId, private: true))!.keyId, b.keyId);
+        expect(await restored.get(a.keyId, private: true), isNull);
+      });
+    }
+
+    test('backup includes a key copied to another entry once', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateSigningKeyPair();
+      await store.putPair(a);
+      final other = '${'cd' * 32}.key';
+      await storage.write(other, (await storage.read('${a.keyId.hex}.key'))!);
+      final backup = await store.backup(
+        'backup passphrase',
+        parameters: fastArgon,
+      );
+      final restored = KeyStore(engine, InMemoryKeyStorage());
+      expect(await restored.restore(backup, 'backup passphrase'), [a.keyId]);
+      // The private half is the only signing entry; revoke still works.
+      await storage.delete('${a.keyId.hex}.pub');
+      await store.revoke(a.keyId, reason: 'test');
+      expect(
+        (await store.get(a.keyId, private: true))!.metadata.isRevoked,
+        isTrue,
+      );
+    });
+
+    test('backup skips an undecodable entry only with onSkipped', () async {
+      final storage = InMemoryKeyStorage();
+      final store = KeyStore(engine, storage);
+      final a = engine.generateEncryptionKeyPair();
+      await store.putPair(a);
+      final bad = '${'ab' * 32}.key';
+      await storage.write(bad, Uint8List.fromList([1, 2, 3]));
+      // Without onSkipped nothing is dropped silently: the backup fails.
+      await expectLater(
+        store.backup('backup passphrase', parameters: fastArgon),
+        throwsA(isA<MalformedDataException>()),
+      );
+      final skipped = <String>[];
+      final backup = await store.backup(
+        'backup passphrase',
+        parameters: fastArgon,
+        onSkipped: (entry, _) => skipped.add(entry),
+      );
+      expect(skipped, [bad]);
+      final restored = KeyStore(engine, InMemoryKeyStorage());
+      expect(await restored.restore(backup, 'backup passphrase'), [a.keyId]);
+    });
+
+    test(
+      'backup fails on a wrong store password, even with onSkipped',
+      () async {
+        final storage = InMemoryKeyStorage();
+        await KeyStore(
+          engine,
+          storage,
+          password: 'store passphrase one',
+          parameters: fastArgon,
+        ).putPair(engine.generateEncryptionKeyPair());
+        // Private keys must never be dropped because the password is wrong.
+        await expectLater(
+          KeyStore(engine, storage, password: 'store passphrase two').backup(
+            'backup passphrase',
+            parameters: fastArgon,
+            onSkipped: (_, _) {},
+          ),
+          throwsA(isA<DecryptionFailedException>()),
+        );
+      },
+    );
+
     test('a private record in a public entry is rejected', () async {
       final storage = InMemoryKeyStorage();
       final store = KeyStore(engine, storage);
@@ -421,13 +525,36 @@ void main() {
 
     test('over-long key labels and revocation reasons', () async {
       final long = 'x' * 4097;
+      // Rejected where the label is introduced, not when the key is saved.
       expect(
-        () => engine.encodeKey(
-          engine
-              .generateSigningKeyPair(metadata: KeyMetadata(label: long))
-              .publicKey,
+        () => engine.generateSigningKeyPair(metadata: KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => engine.generateEncryptionKeyPair(
+          metadata: KeyMetadata(label: long),
         ),
         throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => const KeyMetadata().copyWith(revocationReason: long),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      final plain = engine.generateEncryptionKeyPair();
+      expect(
+        () => plain.publicKey.withMetadata(KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => plain.privateKey.withMetadata(KeyMetadata(label: long)),
+        throwsA(isA<ResourceLimitExceededException>()),
+      );
+      expect(
+        () => engine.importEncryptionPublicKey(
+          plain.publicKey.bytes,
+          metadata: KeyMetadata(label: 'x\uD800'),
+        ),
+        throwsA(isA<InvalidInputException>()),
       );
       final ok = engine.generateSigningKeyPair(
         metadata: KeyMetadata(label: 'x' * 4096),
@@ -446,6 +573,32 @@ void main() {
       // The failed revoke left the stored key readable.
       expect((await store.get(ok.keyId, private: true))!.keyId, ok.keyId);
     });
+  });
+
+  test('invalid UTF-8 in a stored label is malformed', () {
+    final record = engine.encodeKey(
+      engine
+          .generateEncryptionKeyPair(metadata: const KeyMetadata(label: 'LBL!'))
+          .publicKey,
+    );
+    final at = String.fromCharCodes(record).indexOf('LBL!');
+    expect(at, greaterThan(0));
+    final bad = Uint8List.fromList(record)..setRange(at, at + 2, [0xff, 0xfe]);
+    expect(() => engine.decodeKey(bad), throwsA(isA<MalformedDataException>()));
+  });
+
+  test('key state getters', () {
+    final enc = engine.generateEncryptionKeyPair();
+    expect(enc.privateKey.isDestroyed, isFalse);
+    enc.privateKey.destroy();
+    expect(enc.privateKey.isDestroyed, isTrue);
+    final sig = engine.generateSigningKeyPair();
+    expect(sig.privateKey.hasSeed, isTrue);
+    final expanded = engine.importSigningPrivateKeyExpanded(
+      sig.privateKey.secretKey,
+      publicKey: sig.publicKey.bytes,
+    );
+    expect(expanded.hasSeed, isFalse);
   });
 
   test('an out-of-range metadata date is malformed, not a RangeError', () {
