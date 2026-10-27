@@ -393,6 +393,17 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
 - **Standard and interoperable:** FIPS 203/204/205 raw keys and signatures,
   SPKI/PKCS#8 DER/PEM (tested against OpenSSL 3.6), and HPKE key wrapping
   (verified with draft-ietf-hpke-pq vectors).
+- **Conformance tests:**
+
+  | Standard | Vectors |
+  |---|---|
+  | FIPS 203 (ML-KEM) | NIST ACVP; Wycheproof (incl. CCTV edge cases) |
+  | FIPS 204 (ML-DSA) | NIST ACVP; Wycheproof (sign, verify, invalid keys) |
+  | FIPS 205 (SLH-DSA) | NIST ACVP |
+  | RFC 9935 / RFC 9881 (ML-KEM / ML-DSA keys in X.509) | Appendix C example and inconsistent keys, byte for byte |
+  | RFC 9180 + draft-ietf-hpke-pq (HPKE) | hpke-pq vectors |
+  | X-Wing (draft-connolly-cfrg-xwing-kem) | draft vectors |
+  | Symmetric (AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, X25519, Argon2id) | Wycheproof, RFC 7748, RFC 9106 |
 - **Package-specific:** envelope, stream, signed-object, key-record and
   password containers.
 - Test vectors and their provenance are in [test/vectors](test/vectors).

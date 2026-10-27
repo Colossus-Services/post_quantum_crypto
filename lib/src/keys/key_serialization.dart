@@ -416,18 +416,13 @@ final class KeyCodec {
         return key;
       case SignatureAlgorithm a:
         if (seed == null) {
-          if (embeddedPublicKey != null) {
-            // v2 carries the public key, which tr = H(pk) is checked against.
-            return _factory.signingPrivateKeyFromExpanded(
-              a,
-              expanded!,
-              embeddedPublicKey,
-              const KeyMetadata(),
-            );
-          }
-          throw const InvalidKeyException(
-            'Expanded-only ML-DSA keys need the public key; '
-            'use importSigningPrivateKeyExpanded',
+          // The public key is recomputed from the expanded key; a v2
+          // embedded public key must match it.
+          return _factory.signingPrivateKeyFromExpanded(
+            a,
+            expanded!,
+            embeddedPublicKey,
+            const KeyMetadata(),
           );
         }
         final key = _factory.signingPrivateKeyFromSeed(

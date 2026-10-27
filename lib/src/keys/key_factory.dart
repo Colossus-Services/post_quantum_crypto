@@ -8,6 +8,7 @@ import '../encoding/bytes.dart';
 import '../errors.dart';
 import 'key_metadata.dart';
 import 'keys.dart';
+import 'ml_dsa_expanded.dart';
 
 /// Key generation and raw import. Internal; reached through the engine.
 @internal
@@ -143,8 +144,9 @@ final class KeyFactory {
   }
 
   /// Imports an expanded signing secret key. For ML-DSA the public key is
-  /// required and checked against `tr = H(pk)` embedded in the secret key;
-  /// for SLH-DSA it is read from the secret key itself.
+  /// recomputed from the secret key (which also checks s1, s2 and t0, see
+  /// ml_dsa_expanded.dart) and must match `tr = H(pk)` and [publicKey] when
+  /// given; for SLH-DSA it is read from the secret key itself.
   SigningPrivateKey signingPrivateKeyFromExpanded(
     SignatureAlgorithm algorithm,
     Uint8List secretKey,
@@ -163,16 +165,11 @@ final class KeyFactory {
         throw const InvalidKeyException('Public key does not match');
       }
     } else {
-      if (publicKey == null || publicKey.length != prim.publicKeyLength) {
-        throw const InvalidKeyException(
-          'ML-DSA expanded keys require the matching public key',
-        );
-      }
-      pk = Uint8List.fromList(publicKey);
-      // sk = rho(32) || K(32) || tr(64) || ...; pk = rho || t1.
+      pk = mlDsaPublicKeyFromExpanded(algorithm, secretKey);
+      // sk = rho(32) || K(32) || tr(64) || ...; tr = H(pk).
       final tr = _ctx.backend.keccak.shake256(pk, 64);
-      if (!constantTimeEquals(secretKey.sublist(0, 32), pk.sublist(0, 32)) ||
-          !constantTimeEquals(secretKey.sublist(64, 128), tr)) {
+      if (!constantTimeEquals(secretKey.sublist(64, 128), tr) ||
+          (publicKey != null && !constantTimeEquals(pk, publicKey))) {
         throw const InvalidKeyException('Public key does not match');
       }
     }

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:post_quantum_crypto/src/encoding/der.dart';
+import 'package:post_quantum_crypto/src/keys/ml_dsa_expanded.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -165,16 +166,33 @@ void main() {
       expect(back.keyId, kp.keyId);
     });
 
-    test('ML-DSA expanded import needs and checks the public key', () {
-      final kp = engine.generateSigningKeyPair();
-      final der = engine.exportPrivateKeyDer(
-        kp.privateKey,
-        form: PrivateKeyDerForm.expanded,
-      );
+    test('the ML-DSA key check refuses other algorithms', () {
       expect(
-        () => engine.importPrivateKeyDer(der),
-        throwsA(isA<InvalidKeyException>()),
+        () => mlDsaPublicKeyFromExpanded(
+          SignatureAlgorithm.slhDsaShake128f,
+          Uint8List(64),
+        ),
+        throwsArgumentError,
       );
+    });
+
+    test('ML-DSA expanded import derives and checks the public key', () {
+      for (final alg in [
+        SignatureAlgorithm.mlDsa44,
+        SignatureAlgorithm.mlDsa65,
+        SignatureAlgorithm.mlDsa87,
+      ]) {
+        final kp = engine.generateSigningKeyPair(algorithm: alg);
+        final der = engine.exportPrivateKeyDer(
+          kp.privateKey,
+          form: PrivateKeyDerForm.expanded,
+        );
+        // The public key is recomputed from s1, s2 and rho.
+        final key = engine.importPrivateKeyDer(der) as SigningPrivateKey;
+        expect(key.publicKey, kp.publicKey);
+        expect(key.hasSeed, isFalse);
+      }
+      final kp = engine.generateSigningKeyPair();
       final other = engine.generateSigningKeyPair();
       expect(
         () => engine.importSigningPrivateKeyExpanded(
