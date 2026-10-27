@@ -50,15 +50,6 @@ void readHeader(ByteReader r, int expectedType) {
   }
 }
 
-/// Peeks at the object type of [data] without validating the rest.
-int? peekObjectType(Uint8List data) {
-  if (data.length < 6) return null;
-  for (var i = 0; i < 4; i++) {
-    if (data[i] != formatMagic[i]) return null;
-  }
-  return data[4] == formatVersion ? data[5] : null;
-}
-
 /// Limits applied when decoding a canonical string map.
 typedef MapLimits = ({int maxEntries, int maxKeyBytes, int maxValueBytes});
 
@@ -76,7 +67,7 @@ abstract final class CanonicalMap {
   ) {
     final entries = [
       for (final e in map.entries)
-        MapEntry(utf8Bytes(e.key), utf8Bytes(e.value)),
+        MapEntry(utf8BytesStrict(e.key), utf8BytesStrict(e.value)),
     ]..sort((a, b) => compareBytes(a.key, b.key));
     return entries;
   }
@@ -87,6 +78,8 @@ abstract final class CanonicalMap {
     }
     final entries = _sortedEntries(map);
     w.u16(entries.length);
+    // Strict encoding is injective, so distinct keys stay distinct and
+    // sorted strictly ascending, as the reader requires.
     for (final e in entries) {
       if (e.key.isEmpty) {
         throw const InvalidInputException('Map keys must not be empty');

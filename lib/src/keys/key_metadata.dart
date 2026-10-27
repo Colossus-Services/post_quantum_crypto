@@ -149,11 +149,11 @@ final class KeyMetadata {
     if (revokedAt != null) {
       w
         ..u64(_ms(revokedAt!))
-        ..bytes16(utf8Bytes(revocationReason ?? ''));
+        ..bytes16(_text(revocationReason, 'Revocation reason'));
     }
     w
       ..u8(KeyUsage.toMask(usages))
-      ..bytes16(utf8Bytes(label ?? ''));
+      ..bytes16(_text(label, 'Key label'));
     if (replaces != null) w.fixed(replaces!.bytes, KeyId.length);
   }
 
@@ -168,13 +168,13 @@ final class KeyMetadata {
     String? reason;
     if (flags & 0x04 != 0) {
       revoked = _date(r.u64());
-      reason = _utf8(r.bytes16(max: 4096));
+      reason = _utf8(r.bytes16(max: _maxTextBytes));
     }
     final mask = r.u8();
     if (mask & ~0x0f != 0) {
       throw const MalformedDataException('Unknown key usage bits');
     }
-    final label = _utf8(r.bytes16(max: 4096));
+    final label = _utf8(r.bytes16(max: _maxTextBytes));
     final replaces = flags & 0x08 != 0 ? KeyId(r.fixed(KeyId.length)) : null;
     return KeyMetadata(
       createdAt: created,
@@ -195,8 +195,29 @@ final class KeyMetadata {
     return ms;
   }
 
-  static DateTime _date(int ms) =>
-      DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+  /// Largest UTF-8 label or revocation reason, enforced on write and read so
+  /// every record this package writes can be read back.
+  static const int _maxTextBytes = 4096;
+
+  static Bytes _text(String? s, String what) {
+    final b = utf8BytesStrict(s ?? '');
+    if (b.length > _maxTextBytes) {
+      throw ResourceLimitExceededException(
+        '$what exceeds $_maxTextBytes bytes',
+      );
+    }
+    return b;
+  }
+
+  static DateTime _date(int ms) {
+    // u64 values can exceed DateTime's range (±8.64e15 ms).
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+    } on ArgumentError {
+      // RangeError on the VM; a plain ArgumentError on some web targets.
+      throw const MalformedDataException('Key metadata date out of range');
+    }
+  }
 
   static String _utf8(Bytes b) {
     try {

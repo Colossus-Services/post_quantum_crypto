@@ -1,3 +1,57 @@
+## 1.0.1
+
+### Fixed
+
+- **Key metadata**: a label or revocation reason over 4096 UTF-8 bytes is
+  now rejected when written (`ResourceLimitExceededException`). Before, it
+  was written but could not be read back, making the stored key
+  unrecoverable.
+- **Key metadata**: a date beyond `DateTime`'s range in a key record raises
+  `MalformedDataException` instead of a raw `RangeError`.
+- **Strings with unpaired UTF-16 surrogates** in fields that are decoded
+  back (authenticated contexts, signed metadata, key labels and revocation
+  reasons, manifest paths) are rejected with `InvalidInputException`.
+  Before, they were silently encoded as U+FFFD, so two distinct context keys
+  could produce an envelope that no recipient could open, and decoding did
+  not reproduce the input. Passwords and hybrid transcript identities are
+  only hashed and keep the 1.0.0 encoding, so existing data stays readable.
+- **`KeyStore.get`** checks that the stored entry holds the requested key
+  (key id, and private vs public); a swapped or misplaced file raises
+  `InvalidKeyException` instead of returning a different key.
+- **`FileKeyStorage.delete`** waits for pending writes of the same key, so
+  a delete issued after a write is no longer undone by that write. An
+  invalid key name fails the returned Future instead of throwing
+  synchronously.
+- **Stream decryption** opens chunks one at a time as they are emitted, so
+  a large input event no longer holds all its plaintext at once, and
+  `onProgress` reports each chunk as it is emitted instead of a batch total
+  ahead of time.
+
+### Documentation
+
+- SECURITY.md: multi-recipient envelopes and streams are not key-committing;
+  SLH-DSA private-key import takes the public key from the secret key.
+- README: file APIs and caller-supplied input streams let their own errors
+  through unchanged.
+- `TrustStore.evaluate` and `decryptFile` document their clock and file
+  permission behaviour.
+
+### Examples
+
+- New `example/sharing_and_releases.dart` (group sharing with
+  add/remove recipients, password-based encryption, streaming progress,
+  signed manifests and artifacts) and `example/key_management.dart`
+  (metadata, rotation, revocation, policies, backup/restore, PEM). The
+  README lists every example, and CI runs them all.
+
+### CI and tests
+
+- Coverage is uploaded to Codecov (`codecov/codecov-action@v7`); README
+  shows the Codecov badge. `actions/checkout` upgraded to v7.
+- New tests for DER/PKCS#8 of every signature algorithm, PKCS#8 v2
+  embedded public keys, stream decryption cancellation and deferred header
+  parsing, and the fixes above.
+
 ## 1.0.0
 
 Initial release.

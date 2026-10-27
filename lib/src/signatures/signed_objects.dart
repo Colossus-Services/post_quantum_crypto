@@ -277,7 +277,7 @@ final class SignedManifest {
     if (entries.length > limits.maxManifestEntries) {
       throw const ResourceLimitExceededException('Too many manifest entries');
     }
-    final sorted = [for (final e in entries) (utf8Bytes(e.path), e)]
+    final sorted = [for (final e in entries) (utf8BytesStrict(e.path), e)]
       ..sort((a, b) => compareBytes(a.$1, b.$1));
     final w = ByteWriter();
     writeHeader(w, ObjectType.manifest);
@@ -648,6 +648,11 @@ final class TrustStore {
 
   Iterable<SigningPublicKey> get keys => _keys.values;
 
+  /// Whether [verified] was made by a trusted, unrevoked, unexpired key.
+  ///
+  /// Expiry is judged at [at], or the wall clock when omitted. With a
+  /// `SecurityPolicy` clock, pass `at: policy.now()` so this agrees with the
+  /// engine's own expiry checks.
   TrustDecision evaluate(VerifiedSignature verified, {DateTime? at}) {
     final key = _keys[verified.signerKeyId];
     if (key == null || key.algorithm != verified.algorithm) {

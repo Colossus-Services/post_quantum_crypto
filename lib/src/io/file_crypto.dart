@@ -44,6 +44,10 @@ extension PostQuantumCryptoFiles on PostQuantumCryptoEngine {
   /// published (renamed to [outputPath]) only after the final chunk has been
   /// authenticated. On any failure the temporary file is deleted, so a
   /// truncated or tampered input never produces an output file.
+  ///
+  /// The temporary and output files are created with the process's default
+  /// permissions (umask). On a shared host, make the destination directory
+  /// private if other local users must not read the plaintext.
   Future<void> decryptFile(
     String inputPath,
     String outputPath, {
@@ -185,12 +189,20 @@ final class FileKeyStorage implements KeyStorage {
   final Map<String, Future<void>> _pending = {};
 
   @override
-  Future<void> write(String name, Uint8List data) {
-    _file(name); // validate before queueing
+  Future<void> write(String name, Uint8List data) =>
+      _enqueue(name, () => _write(name, data));
+
+  /// Runs [op] after every earlier write or delete of [name] has settled.
+  Future<void> _enqueue(String name, Future<void> Function() op) {
+    // Validate before queueing; report an invalid name as a failed Future,
+    // like the other KeyStorage methods.
+    try {
+      _file(name);
+    } catch (e, s) {
+      return Future.error(e, s);
+    }
     final previous = _pending[name] ?? Future<void>.value();
-    final next = previous
-        .catchError((Object _) {})
-        .then((_) => _write(name, data));
+    final next = previous.catchError((Object _) {}).then((_) => op());
     _pending[name] = next;
     return next.whenComplete(() {
       if (identical(_pending[name], next)) _pending.remove(name);
@@ -235,11 +247,13 @@ final class FileKeyStorage implements KeyStorage {
     }
   }
 
+  /// Deletes [name] once its pending writes have landed, so a delete issued
+  /// after a write is not undone by that write's rename.
   @override
-  Future<void> delete(String name) async {
+  Future<void> delete(String name) => _enqueue(name, () async {
     final f = _file(name);
     if (await f.exists()) await f.delete();
-  }
+  });
 
   @override
   Future<List<String>> list() async {
