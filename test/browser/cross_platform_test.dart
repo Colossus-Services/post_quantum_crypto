@@ -231,7 +231,7 @@ const _pinned = <String, String>{
   'encKey': '8c756e434d9b99002fb0197c3d526376d5f116c3b7b91e4bdad17a71f2745ead',
   'sigKey': '8c7121012dcefa3ffb676668eb6ee4868c429bb30d6b2387fcfe383cfced2469',
   'envelope':
-      '57e9a0bfc5142a73321e18e364e77d5eafd2f1e65fffdad3b333168b9c13f92d',
+      'dfa8a796ebe9002b3f93562ccdcdaf9963d13cdbc60504aba503c4d37d0deb24',
   'signature':
       'd69920f4c5af0db0ad7cd7309a412441909e7ccf606e443ed835ac47e4bc7ba0',
 };

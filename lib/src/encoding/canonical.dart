@@ -7,8 +7,12 @@ import 'bytes.dart';
 /// Magic bytes that open every serialized object: ASCII `PQCR`.
 const List<int> formatMagic = [0x50, 0x51, 0x43, 0x52];
 
-/// The only format version this release writes and reads.
-const int formatVersion = 1;
+/// Format version 1, the version of every object type in 1.x.
+const int formatVersion1 = 1;
+
+/// Format version 2: key-committing envelopes, streams and password objects
+/// (see doc/FORMAT_V2.md).
+const int formatVersion2 = 2;
 
 /// Object type codes (the byte following the version).
 abstract final class ObjectType {
@@ -23,31 +27,52 @@ abstract final class ObjectType {
   static const int hybridKeyMessage = 0x0a;
 }
 
-/// Writes the common header `PQCR || version || type`.
+/// The format version written for objects of [type]. Versions are per type:
+/// only the types whose layout changed moved to version 2, so objects of
+/// the other types stay readable by 1.x.
+int currentFormatVersion(int type) => switch (type) {
+  ObjectType.envelope ||
+  ObjectType.stream ||
+  ObjectType.passwordProtectedKey ||
+  ObjectType.passwordEncryptedData => formatVersion2,
+  _ => formatVersion1,
+};
+
+/// Writes the common header `PQCR || version || type` with the current
+/// version of [type].
 void writeHeader(ByteWriter w, int type) {
   w
     ..raw(formatMagic)
-    ..u8(formatVersion)
+    ..u8(currentFormatVersion(type))
     ..u8(type);
 }
 
-/// Reads and validates the common header.
+/// Reads and validates the common header and returns its version.
 ///
-/// Unknown versions raise [UnsupportedFormatException]; there are no legacy
-/// versions yet, so nothing older is accepted either.
-void readHeader(ByteReader r, int expectedType) {
+/// The current version of [expectedType] is always accepted. An older
+/// version is accepted only with [acceptLegacy] (the policy's
+/// `acceptLegacyFormats`); otherwise, and for unknown versions, it raises
+/// [UnsupportedFormatException].
+int readHeader(ByteReader r, int expectedType, {bool acceptLegacy = false}) {
   final magic = r.fixed(4);
   if (!constantTimeEquals(magic, formatMagic)) {
     throw const MalformedDataException('Not a post_quantum_crypto object');
   }
   final version = r.u8();
-  if (version != formatVersion) {
-    throw const UnsupportedFormatException('Unsupported format version');
-  }
   final type = r.u8();
   if (type != expectedType) {
     throw const UnsupportedFormatException('Unexpected object type');
   }
+  final current = currentFormatVersion(type);
+  if (version == current) return version;
+  if (version >= formatVersion1 && version < current) {
+    if (acceptLegacy) return version;
+    throw const UnsupportedFormatException(
+      'Legacy format version; enable SecurityPolicy.acceptLegacyFormats '
+      'to read it',
+    );
+  }
+  throw const UnsupportedFormatException('Unsupported format version');
 }
 
 /// Limits applied when decoding a canonical string map.

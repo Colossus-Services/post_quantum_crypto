@@ -1,9 +1,10 @@
-// Regenerates test/vectors/post_quantum_crypto_v1.json.
+// Regenerates test/vectors/post_quantum_crypto_v2.json.
 //
 // Usage: dart run test/vectors/generate_format_vectors.dart
 //
 // Only regenerate deliberately: a change here means the wire format changed,
-// which requires a new format version.
+// which requires a new format version. post_quantum_crypto_v1.json is frozen
+// (produced by 1.x) and must never be regenerated.
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,8 +12,8 @@ import 'format_vectors.dart';
 
 Future<void> main() async {
   final vectors = await buildFormatVectors();
-  File('test/vectors/post_quantum_crypto_v1.json').writeAsStringSync(
+  File('test/vectors/post_quantum_crypto_v2.json').writeAsStringSync(
     '${const JsonEncoder.withIndent('  ').convert(vectors)}\n',
   );
-  stdout.writeln('Wrote test/vectors/post_quantum_crypto_v1.json');
+  stdout.writeln('Wrote test/vectors/post_quantum_crypto_v2.json');
 }
