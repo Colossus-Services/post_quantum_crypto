@@ -200,7 +200,7 @@ final class KeyMetadata {
   static const int _maxTextBytes = 4096;
 
   static Bytes _text(String? s, String what) {
-    final b = utf8BytesStrict(s ?? '');
+    final b = utf8Bytes(s ?? '');
     if (b.length > _maxTextBytes) {
       throw ResourceLimitExceededException(
         '$what exceeds $_maxTextBytes bytes',

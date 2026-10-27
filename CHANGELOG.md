@@ -1,3 +1,38 @@
+## 2.0.0
+
+### Breaking
+
+- **Wire format 2.** Every object now carries format version 2, and
+  objects written by 1.x (format 1) are rejected with
+  `UnsupportedFormatException`; there is no migration path. Keys can still
+  be moved over as SPKI/PKCS#8 or raw seeds, and key identifiers are
+  unchanged.
+- **Key-committing encryption.** Envelopes, streams and password objects
+  derive their payload key together with a stored 32-byte commitment,
+  checked before the AEAD opens. A malicious sender can no longer make one
+  multi-recipient envelope or stream decrypt to different plaintexts for
+  different recipients ("invisible salamanders"), and a password object
+  opens under at most one password (no partitioning oracles). See
+  doc/FORMAT_V2.md.
+- Streams no longer carry the 32-byte salt field.
+- Strings with unpaired UTF-16 surrogates are rejected everywhere,
+  passwords and hybrid transcript identities included.
+
+### Added
+
+- `EncryptedEnvelope.formatVersion` and `StreamHeader.formatVersion`.
+- `TrustStore.withClock` and `PostQuantumCryptoEngine.createTrustStore`,
+  whose `evaluate` judges expiry by the engine's policy clock.
+- "Format evolution" rules in doc/FORMATS.md. Every parser checks the
+  format version in one place, so a future format version can keep reading
+  this one behind `SecurityPolicy.acceptLegacyFormats`.
+
+### Tests
+
+- A real two-key AES-GCM collision ("invisible salamanders") built with
+  GHASH arithmetic, rejected by the commitment.
+- Format vectors are now `test/vectors/post_quantum_crypto_v2.json`.
+
 ## 1.0.1
 
 ### Fixed

@@ -307,10 +307,20 @@ void main() {
     });
 
     test('unknown version and type are rejected', () {
-      expect(
-        () => engine.parseEnvelope(Uint8List.fromList(bytes)..[4] = 2),
-        throwsA(isA<UnsupportedFormatException>()),
+      // Version 1 (package 1.x) is not read either, with or without
+      // acceptLegacyFormats.
+      final legacy = engine.withPolicy(
+        SecurityPolicy.standard.copyWith(acceptLegacyFormats: true),
       );
+      for (final version in [0, 1, 3, 0xff]) {
+        final other = Uint8List.fromList(bytes)..[4] = version;
+        for (final e in [engine, legacy]) {
+          expect(
+            () => e.parseEnvelope(other),
+            throwsA(isA<UnsupportedFormatException>()),
+          );
+        }
+      }
       expect(
         () => engine.parseEnvelope(Uint8List.fromList(bytes)..[5] = 9),
         throwsA(isA<UnsupportedFormatException>()),

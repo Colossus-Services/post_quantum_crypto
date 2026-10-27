@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 
 import '../algorithms/algorithms.dart';
+import '../context.dart';
 import '../encoding/bytes.dart';
 import '../encoding/canonical.dart';
 import '../encoding/der.dart';
@@ -78,9 +79,10 @@ Object _algorithmForOid(Uint8List oid) {
 /// Encodes and decodes keys. Internal; reached through the engine.
 @internal
 final class KeyCodec {
+  final CryptoContext _ctx;
   final KeyFactory _factory;
 
-  KeyCodec(this._factory);
+  KeyCodec(this._ctx, this._factory);
 
   // ---------------------------------------------------------------------------
   // PQCR key record
@@ -140,7 +142,7 @@ final class KeyCodec {
   /// material and must reproduce the stored public key.
   QuantumKey decodeRecord(Uint8List bytes) => parseStrict(() {
     final r = ByteReader(bytes);
-    readHeader(r, ObjectType.keyRecord);
+    _ctx.readObjectHeader(r, ObjectType.keyRecord);
     final kind = r.u8();
     final algId = r.u16();
     final pk = r.bytes32(max: _maxKeyField);

@@ -7,8 +7,16 @@ import 'bytes.dart';
 /// Magic bytes that open every serialized object: ASCII `PQCR`.
 const List<int> formatMagic = [0x50, 0x51, 0x43, 0x52];
 
-/// The only format version this release writes and reads.
-const int formatVersion = 1;
+/// The format version this release writes. Version 2 made envelopes,
+/// streams and password objects key-committing (doc/FORMAT_V2.md).
+const int formatVersion = 2;
+
+/// Older format versions this release can still read, under
+/// `SecurityPolicy.acceptLegacyFormats`. Empty: version 1 (package 1.x) is
+/// not read. A future release that changes the format adds the version it
+/// replaces here, with a parsing branch per version (see "Format evolution"
+/// in doc/FORMATS.md).
+const Set<int> legacyFormatVersions = {};
 
 /// Object type codes (the byte following the version).
 abstract final class ObjectType {
@@ -31,23 +39,27 @@ void writeHeader(ByteWriter w, int type) {
     ..u8(type);
 }
 
-/// Reads and validates the common header.
+/// Reads and validates the common header and returns its format version,
+/// for parsers to dispatch on.
 ///
-/// Unknown versions raise [UnsupportedFormatException]; there are no legacy
-/// versions yet, so nothing older is accepted either.
-void readHeader(ByteReader r, int expectedType) {
+/// [formatVersion] is always accepted; a version in [legacyFormatVersions]
+/// only with [acceptLegacy] (the policy's `acceptLegacyFormats`). Anything
+/// else raises [UnsupportedFormatException].
+int readHeader(ByteReader r, int expectedType, {bool acceptLegacy = false}) {
   final magic = r.fixed(4);
   if (!constantTimeEquals(magic, formatMagic)) {
     throw const MalformedDataException('Not a post_quantum_crypto object');
   }
   final version = r.u8();
-  if (version != formatVersion) {
+  if (version != formatVersion &&
+      !(acceptLegacy && legacyFormatVersions.contains(version))) {
     throw const UnsupportedFormatException('Unsupported format version');
   }
   final type = r.u8();
   if (type != expectedType) {
     throw const UnsupportedFormatException('Unexpected object type');
   }
+  return version;
 }
 
 /// Limits applied when decoding a canonical string map.
@@ -67,7 +79,7 @@ abstract final class CanonicalMap {
   ) {
     final entries = [
       for (final e in map.entries)
-        MapEntry(utf8BytesStrict(e.key), utf8BytesStrict(e.value)),
+        MapEntry(utf8Bytes(e.key), utf8Bytes(e.value)),
     ]..sort((a, b) => compareBytes(a.key, b.key));
     return entries;
   }

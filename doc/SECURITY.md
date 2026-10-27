@@ -39,6 +39,15 @@
 - Every envelope and stream uses a fresh random 256-bit DEK, so AEAD nonces
   are never reused under a key: one random nonce per envelope DEK; a counter
   nonce per stream key; one nonce per HPKE context.
+- **Key commitment** (format 2). Envelopes, streams and password objects
+  derive their payload key together with a stored 32-byte commitment that is
+  checked before the AEAD opens (doc/FORMATS.md, "Key commitment"). A
+  malicious sender cannot make one multi-recipient envelope or stream
+  decrypt to different plaintexts for different recipients ("invisible
+  salamanders"), and a password object opens under at most one password (no
+  partitioning oracles). Signing an envelope therefore also pins the one
+  plaintext every recipient sees. Format 1 (package 1.x) lacked this and is
+  not read.
 - Decryption errors are uniform (`DecryptionFailedException`) after parsing,
   and ML-KEM implicit rejection is preserved, to avoid decryption and
   decapsulation oracles. Two distinctions are visible and are not secret:
@@ -79,14 +88,6 @@ both sides agree on the labels they supplied.
   for stronger protection.
 - **Revocation.** Removing a recipient (rewrap) or revoking a key does not
   revoke access to data or keys an attacker already copied.
-- **Not key-committing across recipients.** Each recipient unwraps the data
-  key independently, and AES-GCM and ChaCha20-Poly1305 do not commit to their
-  key. A malicious *sender* can therefore build one multi-recipient envelope
-  or stream that decrypts to different plaintexts for different recipients
-  ("invisible salamanders"). Signing the envelope proves who sent those
-  bytes, not that every recipient sees the same plaintext; when that matters,
-  sign the plaintext (or a digest of it) instead, or send each recipient
-  their own envelope.
 - **SLH-DSA key generation** uses pqcrypto's own `Random.secure()` (pqcrypto
   exposes no seeded entry point); all other randomness comes from this
   package's source.

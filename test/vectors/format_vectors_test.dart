@@ -1,9 +1,10 @@
-/// Published post_quantum_crypto v1 format vectors
-/// (`test/vectors/post_quantum_crypto_v1.json`).
+/// Published post_quantum_crypto format v2 vectors
+/// (`test/vectors/post_quantum_crypto_v2.json`).
 @Tags(['vectors'])
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
@@ -13,7 +14,7 @@ import '../support/vectors.dart';
 import 'format_vectors.dart';
 
 void main() {
-  final v = loadVectors('post_quantum_crypto_v1.json') as Map<String, dynamic>;
+  final v = loadVectors('post_quantum_crypto_v2.json') as Map<String, dynamic>;
   final keys = v['keys'] as Map<String, dynamic>;
   Map<String, dynamic> k(String name) => keys[name] as Map<String, dynamic>;
 
@@ -36,6 +37,31 @@ void main() {
     expect(xwing.keyId.hex, k('xWing')['keyId']);
     expect(mldsa.publicKey.bytes, hex(k('mlDsa65')['publicKey']));
     expect(mldsa.keyId.hex, k('mlDsa65')['keyId']);
+  });
+
+  test('every object carries format version 2', () {
+    for (final name in [
+      'envelope',
+      'envelopeChaCha20Poly1305',
+      'stream',
+      'detachedSignature',
+      'manifest',
+      'keyRecordPublic',
+    ]) {
+      expect(hex(v[name])[4], 2, reason: name);
+    }
+    expect(engine.parseEnvelope(hex(v['envelope'])).formatVersion, 2);
+  });
+
+  test('another format version is rejected', () {
+    for (final version in [1, 3]) {
+      expect(
+        () => engine.parseEnvelope(
+          Uint8List.fromList(hex(v['envelope']))..[4] = version,
+        ),
+        throwsA(isA<UnsupportedFormatException>()),
+      );
+    }
   });
 
   test('envelope decrypts for both recipients', () {

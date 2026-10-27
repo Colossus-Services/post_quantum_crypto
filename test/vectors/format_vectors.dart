@@ -1,4 +1,5 @@
-/// Builds the published format test vectors for post_quantum_crypto v1.
+/// Builds the published test vectors for format version 2
+/// (`post_quantum_crypto_v2.json`).
 ///
 /// Every object is produced by a deterministic engine, so the output is
 /// reproducible; `format_vectors_test.dart` checks both that the stored
@@ -91,10 +92,10 @@ Future<Map<String, Object>> buildFormatVectors() async {
 
   return {
     'description':
-        'post_quantum_crypto format v1 test vectors. Keys are given as seeds; '
-        'all objects are canonical binary encodings in hex. See '
+        'post_quantum_crypto format v2 test vectors. Keys are given as '
+        'seeds; all objects are canonical binary encodings in hex. See '
         'doc/FORMATS.md.',
-    'version': 1,
+    'version': 2,
     'keys': {
       'mlKem768': {
         'seed': _hex(mlkem.privateKey.seed),

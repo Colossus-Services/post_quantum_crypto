@@ -115,9 +115,11 @@ final class SecurityPolicy {
   /// Enforce [KeyMetadata.usages] restrictions.
   final bool enforceKeyUsage;
 
-  /// Whether formats older than the current version are accepted. Only
-  /// version 1 exists, so this currently has no effect; it is reserved so
-  /// that a future release can make legacy acceptance an explicit opt-in.
+  /// Whether objects in an older, still-supported format version are read
+  /// (see "Format evolution" in doc/FORMATS.md). Writers always produce the
+  /// current version. No older version is supported by this release (format
+  /// 1 from package 1.x is not read), so this has no effect yet; it is the
+  /// opt-in through which a future format version can keep reading this one.
   final bool acceptLegacyFormats;
 
   final ResourceLimits limits;

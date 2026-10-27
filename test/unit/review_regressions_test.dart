@@ -343,21 +343,42 @@ void main() {
       }
     });
 
-    test('passwords are only hashed, so 1.0.0 behaviour is kept', () {
-      // Lone surrogates encode as U+FFFD, as in 1.0.0: data sealed under
-      // such a password must stay openable.
-      final sealed = engine.encryptWithPassword(
-        bytesOf('m'),
-        'pass\uD800word-long',
-        parameters: const Argon2idParameters(
-          memoryKiB: 8 * 1024,
-          iterations: 1,
-          parallelism: 1,
+    test('an invalid hybrid transcript fails before key establishment', () {
+      final responder = engine.generateEncryptionKeyPair(
+        algorithm: KemAlgorithm.xWing,
+      );
+      const bad = HybridTranscript(
+        protocol: 'p',
+        initiatorId: 'user\uD800',
+        responderId: 'server',
+      );
+      expect(
+        () => engine.establishHybridKey(responder.publicKey, transcript: bad),
+        throwsA(isA<InvalidInputException>()),
+      );
+      final ok = engine.establishHybridKey(
+        responder.publicKey,
+        transcript: const HybridTranscript(
+          protocol: 'p',
+          initiatorId: 'user',
+          responderId: 'server',
         ),
       );
       expect(
-        engine.decryptWithPassword(sealed, 'pass\uD800word-long'),
-        bytesOf('m'),
+        () => engine.acceptHybridKey(
+          ok.message,
+          privateKey: responder.privateKey,
+          transcript: bad,
+        ),
+        throwsA(isA<InvalidInputException>()),
+      );
+    });
+
+    test('unpaired surrogates in passwords', () {
+      // 'pass\uD800word' and 'pass\uDC00word' must not be the same password.
+      expect(
+        () => engine.encryptWithPassword(bytesOf('m'), 'pass\uD800word-long'),
+        throwsA(isA<InvalidInputException>()),
       );
     });
 

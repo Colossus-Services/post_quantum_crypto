@@ -1,7 +1,11 @@
-# post_quantum_crypto wire formats (version 1)
+# post_quantum_crypto wire formats (version 2)
 
 All objects are **binary**; that is the canonical representation. Hex and
 Base64URL (`TextEncoding`) are lossless wrappers for textual transport.
+
+Version 2 (package 2.x) made envelopes, streams and password objects
+key-committing (see [FORMAT_V2.md](FORMAT_V2.md)). Version 1 (package 1.x)
+is not read.
 
 Conventions:
 
@@ -13,7 +17,8 @@ Conventions:
   before any slice or allocation (see `ResourceLimits`).
 - Parsers are strict: unknown versions, object types, algorithm identifiers,
   flags or trailing bytes are rejected. There are no optional or unknown
-  fields; a future change bumps the format version.
+  fields; a future change bumps the format version (see
+  [Format evolution](#format-evolution)).
 - **Canonical map** (authenticated context, signed metadata): `u16 count`, then
   per entry, sorted strictly ascending by UTF-8 key bytes:
   `bytes8 key || bytes32 value` (UTF-8). Keys are non-empty and unique; any
@@ -22,8 +27,10 @@ Conventions:
 ## Common header
 
 ```text
-"PQCR" (50 51 43 52) | u8 version = 0x01 | u8 objectType
+"PQCR" (50 51 43 52) | u8 version = 0x02 | u8 objectType
 ```
+
+Every object type carries the same format version.
 
 | Type | Object |
 |---|---|
@@ -79,6 +86,28 @@ wrapped   = ctx.Seal(aad = headerHash, DEK)
 The HPKE implementation is verified against the draft-ietf-hpke-pq test
 vectors (ML-KEM-512/768/1024 and X-Wing).
 
+## Key commitment
+
+Envelopes, streams and password objects never use their secret (the DEK, or
+the Argon2id output) as the AEAD key directly. They derive the payload key
+together with a stored 32-byte commitment:
+
+```text
+h0         = SHA-384(all object bytes before the commitment field)
+PRK        = HKDF-Extract(salt = "post_quantum_crypto/v2/<purpose>", ikm = secret)
+payloadKey = HKDF-Expand(PRK, "payload-key" || h0, Nk)
+commitment = HKDF-Expand(PRK, "commitment"  || h0, 32)
+purpose ∈ {envelope, stream, password}           HKDF is HKDF-SHA-384
+```
+
+Decryption recomputes the commitment and compares it in constant time
+before opening the AEAD. Two secrets with the same commitment would be an
+HKDF-SHA-384 collision, so an object decrypts under at most one key: every
+recipient of a multi-recipient envelope or stream sees the same plaintext,
+and a password object opens under at most one password. AES-GCM and
+ChaCha20-Poly1305 alone do not give this ("invisible salamanders",
+partitioning oracles).
+
 ## Envelope (0x01)
 
 ```text
@@ -86,20 +115,24 @@ header
 u16 kdfId (0x0002)
 u16 aeadId
 canonical map  context
-    headerHash = SHA-384(all bytes so far)
+    headerHash = SHA-384(all bytes so far)        (HPKE aad of each wrap)
 u16 recipientCount (1..maxRecipients), recipient records (unique keyIds)
+    h0         = SHA-384(all bytes so far)
+32  commitment                                    (purpose "envelope")
 12  payloadNonce
     payloadAad = SHA-384(all bytes so far)
-bytes32 ciphertext || tag          AEAD(DEK, payloadNonce, plaintext, payloadAad)
+bytes32 ciphertext || tag          AEAD(payloadKey, payloadNonce, plaintext, payloadAad)
 ```
 
-- The DEK is 32 fresh random bytes per envelope; it encrypts exactly one
-  payload, so the random 96-bit nonce is used once under that key.
-- The payload AAD covers the context and **every recipient entry**: adding,
-  removing, substituting or reordering recipients breaks authentication.
+- The DEK is 32 fresh random bytes per envelope, so the payload key encrypts
+  exactly one payload and the random 96-bit nonce is used once under it.
+- The payload AAD covers the context, **every recipient entry** and the
+  commitment: adding, removing, substituting or reordering recipients breaks
+  authentication.
 - Decryption: parse → policy checks → required-context check → select the
-  record whose keyId matches → decapsulate → HPKE Open → payload Open. All
-  authentication failures raise the same `DecryptionFailedException`.
+  record whose keyId matches → decapsulate → HPKE Open → derive and check
+  the commitment → payload Open. All authentication failures raise the same
+  `DecryptionFailedException`.
 
 ## Stream (0x03)
 
@@ -107,18 +140,18 @@ bytes32 ciphertext || tag          AEAD(DEK, payloadNonce, plaintext, payloadAad
 header
 u16 kdfId | u16 aeadId
 u32 chunkSize                (plaintext bytes per chunk; 256 B – 16 MiB)
-32  salt
 7   noncePrefix
 canonical map  context
     wrapHash   = SHA-384(all bytes so far)        (HPKE aad of each wrap)
 u16 recipientCount, recipient records
+    h0         = SHA-384(all bytes so far)
+32  commitment                                    (purpose "stream")
     headerHash = SHA-384(entire header)
 chunk_0 || chunk_1 || … || chunk_n               no framing
 ```
 
 ```text
-streamKey = HKDF-Expand(HKDF-Extract(salt, DEK),
-                        "post_quantum_crypto/v1/stream/key" || headerHash, Nk)
+streamKey = payloadKey (see Key commitment)
 nonce_i   = noncePrefix || u32 i || u8 final      (final = 1 only for chunk_n)
 chunk_i   = AEAD(streamKey, nonce_i, plaintext_i, aad = headerHash)
 ```
@@ -192,13 +225,16 @@ u32 memoryKiB | u32 iterations | u8 parallelism
 16 salt
 u16 aeadId
 canonical map  context
+    h0  = SHA-384(all bytes so far)
+32 commitment                 (purpose "password", secret = Argon2id(password, salt, m, t, p, 32))
 12 nonce
     aad = all bytes so far
-bytes32 ciphertext || tag     AEAD(Argon2id(password, salt, m, t, p, Nk), nonce, payload, aad)
+bytes32 ciphertext || tag     AEAD(payloadKey, nonce, payload, aad)
 ```
 
 For 0x08 the payload is a key record. Argon2id parameters are checked against
-`PasswordPolicy` before any memory is allocated.
+`PasswordPolicy` before any memory is allocated. Passwords are UTF-8; a
+password with an unpaired UTF-16 surrogate is rejected.
 
 ## Hybrid key-establishment message (0x0a)
 
@@ -225,7 +261,7 @@ covered by `test/interop/openssl_test.dart`.
 
 ## Published test vectors
 
-[`test/vectors/post_quantum_crypto_v1.json`](../test/vectors/post_quantum_crypto_v1.json)
+[`test/vectors/post_quantum_crypto_v2.json`](../test/vectors/post_quantum_crypto_v2.json)
 contains, for the formats above, deterministic example objects together with
 the key seeds needed to open them: an envelope with ML-KEM-768 and X-Wing
 recipients, a ChaCha20-Poly1305 envelope, a stream with 256-byte chunks, raw
@@ -234,3 +270,38 @@ its session key, a key record and a password-protected key. An independent
 implementation of this specification should decrypt and verify all of them.
 `format_vectors_test.dart` checks that this package still reproduces them
 byte for byte; any difference is a format change.
+
+## Format evolution
+
+How a future format version is introduced:
+
+1. **Any** change to a layout, a derivation, a label or the meaning of a
+   field bumps the format version in the common header. There are no
+   optional fields, extension points or feature flags; the version byte is
+   the only switch, so every object has exactly one interpretation.
+2. All object types share one version, and the writer always produces the
+   current one (`formatVersion` in `lib/src/encoding/canonical.dart`).
+3. Every parser reads the common header through
+   `CryptoContext.readObjectHeader`, which returns the version it read and
+   is the single place that decides which versions are accepted under the
+   engine's policy: the current one always; a version
+   listed in `legacyFormatVersions` only under
+   `SecurityPolicy.acceptLegacyFormats` (off by default). Anything else is
+   `UnsupportedFormatException`, raised before the rest of the object is
+   parsed.
+4. A release that wants to keep reading the previous version adds it to
+   `legacyFormatVersions` and gives each affected parser a branch on the
+   version returned by `readObjectHeader`. Legacy objects are read only;
+   the migration path is to write them again in the current version
+   (`rewrapEnvelope`, `changeKeyPassword`, or `decryptStream` piped into
+   `encryptStream`). A release may also drop a version entirely, as 2.0 did
+   for version 1.
+5. Each version has its own published vectors
+   (`test/vectors/post_quantum_crypto_v<N>.json`); a version that is still
+   readable keeps its file and a test that reads it.
+6. Algorithm identifiers (KEM, KDF, AEAD, signature) are registries, not
+   versions: adding an algorithm only adds an identifier, and readers reject
+   identifiers they do not know.
+7. Parsed objects expose `formatVersion` (`EncryptedEnvelope`,
+   `StreamHeader`), so applications can find and migrate objects of an older
+   version.

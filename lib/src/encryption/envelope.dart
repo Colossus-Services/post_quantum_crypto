@@ -4,13 +4,15 @@
 /// Layout (all integers big-endian; see doc/FORMATS.md):
 ///
 /// ```text
-/// "PQCR" u8 version=1 u8 type=0x01
+/// "PQCR" u8 version=2 u8 type=0x01
 /// u16 kdfId          (0x0002 = HKDF-SHA-384)
 /// u16 aeadId         (0x0002 = AES-256-GCM, 0x0003 = ChaCha20-Poly1305)
 /// context            canonical map (authenticated, not secret)
 ///   ── headerHash = SHA-384(all bytes so far)
 /// u16 recipientCount, then per recipient:
 ///   u16 kemId | 32 keyId | enc (KEM ciphertext) | wrappedDek (32 + 16)
+///   ── h0 = SHA-384(all bytes so far)
+/// 32  commitment     (see commitment.dart)
 /// 12  payloadNonce
 ///   ── payloadAad = SHA-384(all bytes so far)
 /// u32 ciphertextLength | ciphertext || tag
@@ -18,7 +20,9 @@
 ///
 /// The payload AAD covers the whole header including every recipient entry,
 /// so adding, removing, substituting or reordering recipients, or editing the
-/// context, makes the payload fail authentication.
+/// context, makes the payload fail authentication. The payload key is
+/// derived from the DEK together with the stored commitment, so every
+/// recipient necessarily decrypts the same plaintext.
 library;
 
 import 'dart:typed_data';
@@ -32,6 +36,7 @@ import '../encoding/canonical.dart';
 import '../errors.dart';
 import '../keys/key_metadata.dart';
 import '../keys/keys.dart';
+import 'commitment.dart';
 import 'key_wrapping.dart';
 
 /// Public description of one envelope recipient.
@@ -52,10 +57,13 @@ final class EnvelopeRecipient {
 final class EncryptedEnvelope {
   final Bytes _bytes;
 
+  /// The wire-format version of this envelope (see doc/FORMATS.md).
+  final int formatVersion;
+
   /// The AEAD protecting the payload and the wrapped keys.
   final AeadAlgorithm aead;
 
-  /// The KDF used for key wrapping (always HKDF-SHA-384 in version 1).
+  /// The KDF used for key wrapping (always HKDF-SHA-384).
   final KdfAlgorithm kdf;
 
   /// The authenticated application context. Not secret, and not proof of
@@ -77,8 +85,17 @@ final class EncryptedEnvelope {
   @internal
   final Bytes payloadAad;
 
+  /// Digest of the bytes before the commitment.
+  @internal
+  final Bytes h0;
+
+  /// The stored key commitment.
+  @internal
+  final Bytes commitment;
+
   EncryptedEnvelope._(
     this._bytes,
+    this.formatVersion,
     this.aead,
     this.kdf,
     this.context,
@@ -87,6 +104,8 @@ final class EncryptedEnvelope {
     this.ciphertext,
     this.headerHash,
     this.payloadAad,
+    this.h0,
+    this.commitment,
   );
 
   /// The recipients able to decrypt this envelope.
@@ -110,7 +129,7 @@ final class EncryptedEnvelope {
   static EncryptedEnvelope parse(CryptoContext ctx, Uint8List data) =>
       parseStrict(() {
         final r = ByteReader(data);
-        readHeader(r, ObjectType.envelope);
+        final version = ctx.readObjectHeader(r, ObjectType.envelope);
         final kdf = KdfAlgorithm.fromId(r.u16());
         if (kdf != KdfAlgorithm.hkdfSha384) {
           throw const UnsupportedAlgorithmException('Unsupported KDF');
@@ -123,6 +142,8 @@ final class EncryptedEnvelope {
           aead,
           ctx.policy.limits.maxRecipients,
         );
+        final h0 = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
+        final commitment = r.fixed(commitmentLength);
         final nonce = r.fixed(aead.nonceLength);
         final payloadAad = ctx.sha384(Uint8List.sublistView(data, 0, r.offset));
         final ct = r.view32(
@@ -134,6 +155,7 @@ final class EncryptedEnvelope {
         r.expectEnd();
         return EncryptedEnvelope._(
           data,
+          version,
           aead,
           kdf,
           context,
@@ -142,6 +164,8 @@ final class EncryptedEnvelope {
           ct,
           headerHash,
           payloadAad,
+          h0,
+          commitment,
         );
       });
 }
@@ -153,7 +177,9 @@ final class EnvelopeService {
   final CryptoContext _ctx;
   final KeyWrapper _wrapper;
 
-  EnvelopeService(this._ctx) : _wrapper = KeyWrapper(_ctx, 'envelope');
+  EnvelopeService(this._ctx) : _wrapper = KeyWrapper(_ctx, _purpose);
+
+  static const _purpose = 'envelope';
 
   EncryptedEnvelope encrypt(
     Uint8List plaintext,
@@ -183,11 +209,24 @@ final class EnvelopeService {
         for (final r in recipients) _wrapper.wrap(r, dek, headerHash, aeadAlg),
       ];
       writeRecipients(w, records);
-      final nonce = _ctx.randomBytes(aeadAlg.nonceLength);
-      w.raw(nonce);
-      final payloadAad = _ctx.sha384(w.toBytes());
-      final ct = _ctx.aead(aeadAlg).seal(dek, nonce, plaintext, payloadAad);
-      w.bytes32(ct);
+      final committed = CommittedKey.derive(
+        _ctx,
+        _purpose,
+        dek,
+        _ctx.sha384(w.toBytes()),
+        aeadAlg.keyLength,
+      );
+      try {
+        w.raw(committed.commitment);
+        final nonce = _ctx.randomBytes(aeadAlg.nonceLength);
+        w.raw(nonce);
+        final payloadAad = _ctx.sha384(w.toBytes());
+        w.bytes32(
+          _ctx.aead(aeadAlg).seal(committed.key, nonce, plaintext, payloadAad),
+        );
+      } finally {
+        committed.destroy();
+      }
     } finally {
       zeroize(dek);
     }
@@ -210,14 +249,35 @@ final class EnvelopeService {
       envelope.aead,
     );
     if (dek == null) throw const DecryptionFailedException();
+    final CommittedKey committed;
     try {
+      committed = CommittedKey.derive(
+        _ctx,
+        _purpose,
+        dek,
+        envelope.h0,
+        envelope.aead.keyLength,
+      );
+    } finally {
+      zeroize(dek);
+    }
+    try {
+      // The commitment is checked before the AEAD is opened.
+      if (!committed.matches(envelope.commitment)) {
+        throw const DecryptionFailedException();
+      }
       final pt = _ctx
           .aead(envelope.aead)
-          .open(dek, envelope.nonce, envelope.ciphertext, envelope.payloadAad);
+          .open(
+            committed.key,
+            envelope.nonce,
+            envelope.ciphertext,
+            envelope.payloadAad,
+          );
       if (pt == null) throw const DecryptionFailedException();
       return pt;
     } finally {
-      zeroize(dek);
+      committed.destroy();
     }
   }
 

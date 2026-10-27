@@ -105,7 +105,7 @@ final class DetachedSignature {
       parseStrict(() {
         final data = Uint8List.fromList(bytes);
         final r = ByteReader(data);
-        readHeader(r, ObjectType.detachedSignature);
+        ctx.readObjectHeader(r, ObjectType.detachedSignature);
         final alg = SignatureAlgorithm.fromId(r.u16());
         final keyId = KeyId(r.fixed(KeyId.length));
         final context = r.bytes8();
@@ -171,7 +171,7 @@ final class SignedArtifact {
   static SignedArtifact parse(CryptoContext ctx, Uint8List bytes) =>
       parseStrict(() {
         final r = ByteReader(bytes);
-        readHeader(r, ObjectType.signedArtifact);
+        ctx.readObjectHeader(r, ObjectType.signedArtifact);
         final sig = DetachedSignature.parse(
           ctx,
           r.bytes32(max: _maxDetachedSignatureBytes(ctx)),
@@ -277,7 +277,7 @@ final class SignedManifest {
     if (entries.length > limits.maxManifestEntries) {
       throw const ResourceLimitExceededException('Too many manifest entries');
     }
-    final sorted = [for (final e in entries) (utf8BytesStrict(e.path), e)]
+    final sorted = [for (final e in entries) (utf8Bytes(e.path), e)]
       ..sort((a, b) => compareBytes(a.$1, b.$1));
     final w = ByteWriter();
     writeHeader(w, ObjectType.manifest);
@@ -312,7 +312,7 @@ final class SignedManifest {
         final limits = ctx.policy.limits;
         final data = Uint8List.fromList(bytes);
         final r = ByteReader(data);
-        readHeader(r, ObjectType.manifest);
+        ctx.readObjectHeader(r, ObjectType.manifest);
         final alg = SignatureAlgorithm.fromId(r.u16());
         final keyId = KeyId(r.fixed(KeyId.length));
         final context = r.bytes8();
@@ -635,7 +635,19 @@ enum TrustDecision {
 final class TrustStore {
   final Map<KeyId, SigningPublicKey> _keys = {};
 
-  TrustStore([Iterable<SigningPublicKey> trusted = const []]) {
+  /// The time used by [evaluate] when no `at:` is given.
+  final DateTime Function() _clock;
+
+  /// A trust store that judges expiry by the wall clock.
+  TrustStore([Iterable<SigningPublicKey> trusted = const []])
+    : this.withClock(DateTime.now, trusted);
+
+  /// A trust store that judges expiry by [clock], e.g. a `SecurityPolicy`'s
+  /// `now` (see `PostQuantumCryptoEngine.createTrustStore`).
+  TrustStore.withClock(
+    DateTime Function() clock, [
+    Iterable<SigningPublicKey> trusted = const [],
+  ]) : _clock = clock {
     trusted.forEach(trust);
   }
 
@@ -650,16 +662,16 @@ final class TrustStore {
 
   /// Whether [verified] was made by a trusted, unrevoked, unexpired key.
   ///
-  /// Expiry is judged at [at], or the wall clock when omitted. With a
-  /// `SecurityPolicy` clock, pass `at: policy.now()` so this agrees with the
-  /// engine's own expiry checks.
+  /// Expiry is judged at [at], or by this store's clock when omitted.
+  /// A store from `PostQuantumCryptoEngine.createTrustStore` uses the
+  /// engine's policy clock, so it agrees with the engine's expiry checks.
   TrustDecision evaluate(VerifiedSignature verified, {DateTime? at}) {
     final key = _keys[verified.signerKeyId];
     if (key == null || key.algorithm != verified.algorithm) {
       return TrustDecision.unknownSigner;
     }
     if (key.metadata.isRevoked) return TrustDecision.revoked;
-    if (key.metadata.isExpiredAt(at ?? DateTime.now())) {
+    if (key.metadata.isExpiredAt(at ?? _clock())) {
       return TrustDecision.expired;
     }
     return TrustDecision.trusted;
