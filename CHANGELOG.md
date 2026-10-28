@@ -18,8 +18,12 @@ Found by the new standards-conformance vectors (below):
 
 - An **expanded-only ML-DSA private key** (PKCS#8, RFC 9881 `expandedKey`)
   now imports on its own: its public key is recomputed instead of being
-  required alongside. `importSigningPrivateKeyExpanded` still takes the
-  public key and checks it.
+  required alongside. `importSigningPrivateKeyExpanded`'s `publicKey` is
+  now optional; when given, it must match the recomputed one.
+- The new key checks evaluate every coefficient before deciding (timing does
+  not depend on where a key fails) and wipe every buffer derived from the
+  secret key, including a rejected key's copy. They cost about one signing
+  operation per import (ML-DSA-87: ~6 ms on the VM).
 
 ### Tests
 

@@ -102,7 +102,13 @@ final class MlKemScheme implements KemScheme {
       publicKey: Uint8List.fromList(ek),
       secret: KemSecret([Uint8List.fromList(expanded)]),
     );
-    _pairwiseConsistency(material, expanded);
+    try {
+      _pairwiseConsistency(material, expanded);
+    } catch (_) {
+      // Rejected: no one will own this copy of the secret key.
+      material.secret.destroy();
+      rethrow;
+    }
     return material;
   }
 
@@ -119,10 +125,14 @@ final class MlKemScheme implements KemScheme {
     } finally {
       zeroize(m);
     }
-    final ss = decapsulate(material.secret, encap.ciphertext);
-    final ok = constantTimeEquals(ss, encap.sharedSecret);
-    zeroize(ss);
-    zeroize(encap.sharedSecret);
+    final bool ok;
+    try {
+      final ss = decapsulate(material.secret, encap.ciphertext);
+      ok = constantTimeEquals(ss, encap.sharedSecret);
+      zeroize(ss);
+    } finally {
+      zeroize(encap.sharedSecret);
+    }
     if (!ok) {
       throw const InvalidKeyException(
         'ML-KEM secret key fails the pairwise consistency test',

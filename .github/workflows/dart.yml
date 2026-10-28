@@ -81,11 +81,15 @@ jobs:
           dart test --platform vm ${{ matrix.selector }}
           --total-shards 2 --shard-index ${{ matrix.index }}
           --coverage=./coverage
+      # Upload even when tests fail, so Codecov always receives all four
+      # shards (codecov.yml: after_n_builds) and never waits forever.
       - name: Generate coverage report
+        if: ${{ !cancelled() }}
         run: |
           dart pub global activate coverage
           dart pub global run coverage:format_coverage --packages=.dart_tool/package_config.json --report-on=lib --lcov -o ./coverage/lcov.info -i ./coverage
       - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

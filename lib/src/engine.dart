@@ -155,11 +155,16 @@ final class PostQuantumCryptoEngine {
     metadata,
   );
 
-  /// Imports an expanded ML-DSA secret key together with its public key,
-  /// which is checked against the key's embedded `tr = H(pk)`.
+  /// Imports an expanded ML-DSA (or SLH-DSA) secret key.
+  ///
+  /// For ML-DSA the public key is recomputed from the secret key (FIPS 204
+  /// `t = A·s1 + s2`), which also checks that s1 and s2 are in range and
+  /// that `t0` and the embedded `tr = H(pk)` match; a key that fails any
+  /// check raises [InvalidKeyException]. When [publicKey] is given it must
+  /// equal the recomputed one.
   SigningPrivateKey importSigningPrivateKeyExpanded(
     List<int> secretKey, {
-    required List<int> publicKey,
+    List<int>? publicKey,
     SignatureAlgorithm algorithm = SignatureAlgorithm.mlDsa65,
     KeyMetadata metadata = const KeyMetadata(),
   }) => _keys.signingPrivateKeyFromExpanded(

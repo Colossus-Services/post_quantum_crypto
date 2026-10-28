@@ -65,92 +65,120 @@ Uint8List mlDsaPublicKeyFromExpanded(
   final etaPolyBytes = 32 * etaBits;
   const t0PolyBytes = 32 * _d;
 
-  // skEncode (Algorithm 24): rho(32) || K(32) || tr(64) || s1 || s2 || t0.
-  var offset = 128;
-  List<int> secretPoly() {
-    final packed = _unpack(sk, offset, etaBits);
-    offset += etaPolyBytes;
-    for (final v in packed) {
-      // Packed as eta − c; anything above 2·eta is outside [−eta, eta].
-      if (v > 2 * eta) {
-        throw const InvalidKeyException(
-          'ML-DSA secret key has s1 or s2 out of range',
-        );
-      }
-    }
-    return [for (final v in packed) (eta - v) % _q];
-  }
+  // Every buffer derived from the secret key is wiped before returning.
+  final secrets = <Int32List>[];
+  Int32List secret(Int32List p) => p..also(secrets.add);
 
-  final s1 = [for (var i = 0; i < l; i++) secretPoly()..ntt()];
-  final s2 = [for (var i = 0; i < k; i++) secretPoly()];
-
-  final rho = Uint8List.sublistView(sk, 0, 32);
-  final pk = BytesBuilder(copy: false)..add(rho);
-  var t0Offset = offset;
-  for (var r = 0; r < k; r++) {
-    // t[r] = NTT⁻¹(Σ_s Â[r][s] ∘ NTT(s1[s])) + s2[r]
-    final acc = List<int>.filled(_n, 0);
-    for (var s = 0; s < l; s++) {
-      final a = _rejNttPoly(rho, s, r);
-      final b = s1[s];
+  // Data-independent checks: every coefficient is examined and the verdict
+  // is taken once at the end, so timing does not reveal where a key fails.
+  var outOfRange = 0;
+  var t0Mismatch = 0;
+  try {
+    // skEncode (Algorithm 24): rho(32) || K(32) || tr(64) || s1 || s2 || t0.
+    var offset = 128;
+    Int32List secretPoly() {
+      final p = secret(_unpack(sk, offset, etaBits));
+      offset += etaPolyBytes;
       for (var i = 0; i < _n; i++) {
-        acc[i] = (acc[i] + a[i] * b[i]) % _q;
+        // Packed as eta − c; a value above 2·eta is outside [−eta, eta].
+        outOfRange |= ((2 * eta - p[i]) >> 8) & 1;
+        p[i] = (eta - p[i]) % _q;
       }
+      return p;
     }
-    acc.invNtt();
-    final t0Packed = _unpack(sk, t0Offset, _d);
-    t0Offset += t0PolyBytes;
-    final t1 = List<int>.filled(_n, 0);
-    for (var i = 0; i < _n; i++) {
-      final t = (acc[i] + s2[r][i]) % _q;
-      // Power2Round (Algorithm 35): t0 = t mod± 2^d, t1 = (t − t0) / 2^d.
-      var t0 = t % (1 << _d);
-      if (t0 > 1 << (_d - 1)) t0 -= 1 << _d;
-      // t0 is stored packed as 2^(d−1) − t0.
-      if ((1 << (_d - 1)) - t0Packed[i] != t0) {
-        throw const InvalidKeyException(
-          'ML-DSA secret key is inconsistent: t0 does not match s1 and s2',
-        );
+
+    final s1 = [for (var i = 0; i < l; i++) secretPoly()..ntt()];
+    final s2 = [for (var i = 0; i < k; i++) secretPoly()];
+
+    final rho = Uint8List.sublistView(sk, 0, 32);
+    final pk = BytesBuilder(copy: false)..add(rho);
+    var t0Offset = offset;
+    final acc = secret(Int32List(_n));
+    final t1 = Int32List(_n);
+    for (var r = 0; r < k; r++) {
+      // t[r] = NTT⁻¹(Σ_s Â[r][s] ∘ NTT(s1[s])) + s2[r]
+      acc.fillRange(0, _n, 0);
+      for (var s = 0; s < l; s++) {
+        final a = _rejNttPoly(rho, s, r);
+        final b = s1[s];
+        for (var i = 0; i < _n; i++) {
+          acc[i] = (acc[i] + a[i] * b[i]) % _q;
+        }
       }
-      t1[i] = (t - t0) >> _d;
+      acc.invNtt();
+      final t0Packed = secret(_unpack(sk, t0Offset, _d));
+      t0Offset += t0PolyBytes;
+      for (var i = 0; i < _n; i++) {
+        final t = (acc[i] + s2[r][i]) % _q;
+        // Power2Round (Algorithm 35): t0 = t mod± 2^d, t1 = (t − t0) / 2^d.
+        // t0 lies in (−2^(d−1), 2^(d−1)]; subtract 2^d above the midpoint.
+        final low = t & ((1 << _d) - 1);
+        final above = (((1 << (_d - 1)) - low) >> 31) & 1;
+        final t0 = low - (above << _d);
+        // t0 is stored packed as 2^(d−1) − t0.
+        t0Mismatch |= ((1 << (_d - 1)) - t0Packed[i]) ^ t0;
+        t1[i] = (t - t0) >> _d;
+      }
+      // pkEncode (Algorithm 22): t1 coefficients packed in 10 bits.
+      pk.add(_pack(t1, 10));
     }
-    // pkEncode (Algorithm 22): t1 coefficients packed in 10 bits.
-    pk.add(_pack(t1, 10));
+    if (outOfRange != 0) {
+      throw const InvalidKeyException(
+        'ML-DSA secret key has s1 or s2 out of range',
+      );
+    }
+    if (t0Mismatch != 0) {
+      throw const InvalidKeyException(
+        'ML-DSA secret key is inconsistent: t0 does not match s1 and s2',
+      );
+    }
+    return pk.toBytes();
+  } finally {
+    for (final p in secrets) {
+      p.fillRange(0, p.length, 0);
+    }
   }
-  return pk.toBytes();
+}
+
+extension<T> on T {
+  void also(void Function(T) f) => f(this);
 }
 
 /// Â[r][s] = RejNTTPoly(rho || s || r) (Algorithms 30 and 32).
-List<int> _rejNttPoly(Uint8List rho, int s, int r) {
+Int32List _rejNttPoly(Uint8List rho, int s, int r) {
   final seed = Uint8List(34)
     ..setAll(0, rho)
     ..[32] = s
     ..[33] = r;
+  final out = Int32List(_n);
   // SHAKE128 output is prefix-consistent, so a longer squeeze only extends
   // the stream; 5 blocks almost always suffice (rejection rate ≈ 0.1%).
+  // (A is public: this rejection loop depends on rho only.)
   for (var length = 5 * 168; ; length *= 2) {
     final stream = Shake128.shake(seed, length);
-    final out = <int>[];
-    for (var i = 0; i + 3 <= stream.length && out.length < _n; i += 3) {
+    var j = 0;
+    for (var i = 0; i + 3 <= stream.length && j < _n; i += 3) {
       final z =
           stream[i] | (stream[i + 1] << 8) | ((stream[i + 2] & 0x7f) << 16);
-      if (z < _q) out.add(z);
+      if (z < _q) out[j++] = z;
     }
-    if (out.length == _n) return out;
+    if (j == _n) return out;
   }
 }
 
 /// The 256 [bits]-bit little-endian coefficients packed at [offset].
-List<int> _unpack(Uint8List data, int offset, int bits) {
+Int32List _unpack(Uint8List data, int offset, int bits) {
   final mask = (1 << bits) - 1;
-  return List<int>.generate(_n, (i) {
+  final out = Int32List(_n);
+  for (var i = 0; i < _n; i++) {
     final bit = i * bits;
     final byte = offset + (bit >> 3);
     var word = data[byte];
     if (byte + 1 < data.length) word |= data[byte + 1] << 8;
     if (byte + 2 < data.length) word |= data[byte + 2] << 16;
-    return (word >> (bit & 7)) & mask;
-  });
+    out[i] = (word >> (bit & 7)) & mask;
+  }
+  return out;
 }
 
 /// Packs 256 [bits]-bit coefficients little-endian (SimpleBitPack).

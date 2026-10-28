@@ -77,6 +77,11 @@ void main() {
         final t0Bytes = (layout.t0 - layout.s2) ~/ (32 * layout.etaBits) * 416;
         expect(layout.t0 + t0Bytes, sk.length);
         expect(mlDsaPublicKeyFromExpanded(alg, sk), kp.publicKey.bytes);
+        // The public key is optional on import.
+        expect(
+          engine.importSigningPrivateKeyExpanded(sk, algorithm: alg).publicKey,
+          kp.publicKey,
+        );
       });
 
       test('rho, tr, t0 and in-range s2 changes are detected', () {

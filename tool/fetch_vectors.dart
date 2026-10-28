@@ -253,7 +253,16 @@ Future<void> _rfcExamples(int rfc) async {
   String? label;
   StringBuffer? body;
   for (final line in const LineSplitter().convert(text)) {
-    if (line.startsWith('Appendix C.')) inAppendixC = true;
+    // Only Appendix C; stop at the next appendix or back-matter heading.
+    if (line.startsWith('Appendix C.')) {
+      inAppendixC = true;
+      continue;
+    }
+    if (inAppendixC &&
+        body == null &&
+        RegExp(r'^(Appendix [D-Z]\.|Acknowledgments|Authors)').hasMatch(line)) {
+      break;
+    }
     if (!inAppendixC) continue;
     final h = heading.firstMatch(line);
     if (h != null) {
@@ -263,6 +272,9 @@ Future<void> _rfcExamples(int rfc) async {
     }
     final b = begin.firstMatch(line);
     if (b != null) {
+      if (section == null) {
+        throw StateError('RFC $rfc: PEM block before any C.x section heading');
+      }
       label = b.group(1);
       body = StringBuffer();
       continue;
