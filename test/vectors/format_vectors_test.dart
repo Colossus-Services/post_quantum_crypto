@@ -1,6 +1,9 @@
 /// Published post_quantum_crypto format v2 vectors
 /// (`test/vectors/post_quantum_crypto_v2.json`).
-@Tags(['vectors'])
+///
+/// Also tagged `platform`: it exercises the file-based vector loader, so it
+/// runs on macOS and Windows too.
+@Tags(['vectors', 'platform'])
 library;
 
 import 'dart:convert';

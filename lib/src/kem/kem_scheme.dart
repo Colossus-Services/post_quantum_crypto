@@ -98,10 +98,46 @@ final class MlKemScheme implements KemScheme {
     if (!constantTimeEquals(_keccak.sha3_256(ek), h)) {
       throw const InvalidKeyException('ML-KEM secret key fails hash check');
     }
-    return (
+    final material = (
       publicKey: Uint8List.fromList(ek),
       secret: KemSecret([Uint8List.fromList(expanded)]),
     );
+    try {
+      _pairwiseConsistency(material, expanded);
+    } catch (_) {
+      // Rejected: no one will own this copy of the secret key.
+      material.secret.destroy();
+      rethrow;
+    }
+    return material;
+  }
+
+  /// Pairwise-consistency test: the hash check above does not cover the
+  /// secret vector s, so a key with a mutated s (RFC 9935 C.4.1, example 2)
+  /// would otherwise import and then silently fail every decapsulation.
+  /// Encapsulates to the embedded public key and requires decapsulation to
+  /// agree. The message is derived from the key, so no randomness is needed.
+  void _pairwiseConsistency(KemKeyMaterial material, Uint8List expanded) {
+    final m = _keccak.sha3_256(expanded);
+    final RawEncapsulation encap;
+    try {
+      encap = encapsulate(material.publicKey, m);
+    } finally {
+      zeroize(m);
+    }
+    final bool ok;
+    try {
+      final ss = decapsulate(material.secret, encap.ciphertext);
+      ok = constantTimeEquals(ss, encap.sharedSecret);
+      zeroize(ss);
+    } finally {
+      zeroize(encap.sharedSecret);
+    }
+    if (!ok) {
+      throw const InvalidKeyException(
+        'ML-KEM secret key fails the pairwise consistency test',
+      );
+    }
   }
 
   @override

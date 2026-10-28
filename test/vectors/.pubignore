@@ -1,0 +1,5 @@
+# Third-party test vectors are only needed to run this repository's tests;
+# keep them out of the published package. The package's own format vectors
+# stay, since doc/FORMATS.md points to them.
+*.json
+!post_quantum_crypto_v2.json

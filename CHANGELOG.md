@@ -1,3 +1,58 @@
+## 2.1.0
+
+### Fixed
+
+Found by the new standards-conformance vectors (below):
+
+- **ML-DSA expanded private keys with s1 or s2 out of range** were accepted
+  and used to sign (Wycheproof). They are now rejected.
+- **ML-DSA expanded private keys whose `t0` does not match s1 and s2** were
+  accepted, even with the matching public key (RFC 9881 C.4, example 3).
+  The import now recomputes `t = A·s1 + s2` (FIPS 204) and rejects them.
+- **ML-KEM expanded private keys with a mutated secret vector** but a valid
+  `H(ek)` were accepted and then silently failed every decapsulation
+  (RFC 9935 C.4.1, example 2). The import now runs a pairwise-consistency
+  test.
+
+### Changed
+
+- An **expanded-only ML-DSA private key** (PKCS#8, RFC 9881 `expandedKey`)
+  now imports on its own: its public key is recomputed instead of being
+  required alongside. `importSigningPrivateKeyExpanded`'s `publicKey` is
+  now optional; when given, it must match the recomputed one.
+- The new key checks evaluate every coefficient before deciding (timing does
+  not depend on where a key fails) and wipe every buffer derived from the
+  secret key, including a rejected key's copy. They cost about one signing
+  operation per import (ML-DSA-87: ~6 ms on the VM).
+
+### Tests
+
+- Wycheproof ML-KEM (key generation, encapsulation with unreduced and
+  overflowing keys, decapsulation incl. CCTV strcmp, expanded keys) and
+  ML-DSA (deterministic and randomized signing, invalid keys, verification
+  of malformed signatures) for every parameter set.
+- RFC 9881 and RFC 9935 Appendix C: every example key in the seed,
+  expanded and both forms is imported and re-exported byte for byte, and
+  every inconsistent key is rejected.
+- `tool/fetch_vectors.dart` fetches and trims the new sources;
+  `test/vectors/PROVENANCE.md` records them. Third-party vectors are no
+  longer included in the published package (159 KB instead of 3 MB).
+
+### CI
+
+- Faster CI through parallel jobs:
+  - The VM suite runs in four coverage shards of similar length (the
+    `vectors` tag and the rest, each split in two); Codecov waits for all
+    uploads. The
+    few `slow` tests run in their own job without coverage instrumentation,
+    which slowed them several times over.
+  - Lint and package checks are separate jobs, and the examples run
+    concurrently.
+  - The macOS/Windows jobs run only the tests tagged `platform` (file
+    system, permissions, processes, isolates); everything else is pure Dart
+    computation and already runs on Linux and in browsers.
+  - A newer push to a PR cancels the running check.
+
 ## 2.0.1
 
 ### Fixed

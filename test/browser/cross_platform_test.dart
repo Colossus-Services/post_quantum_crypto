@@ -169,6 +169,30 @@ void main() {
   });
 
   group('workflows', () {
+    test('expanded private keys: public key recomputed, PCT', () {
+      // ML-DSA recomputes t = A·s1 + s2 (NTT arithmetic that must be exact
+      // with JavaScript numbers); ML-KEM runs its pairwise-consistency test.
+      final seeded = deterministicEngine(7);
+      for (final alg in [
+        SignatureAlgorithm.mlDsa44,
+        SignatureAlgorithm.mlDsa65,
+        SignatureAlgorithm.mlDsa87,
+      ]) {
+        final kp = seeded.generateSigningKeyPair(algorithm: alg);
+        final der = engine.exportPrivateKeyDer(
+          kp.privateKey,
+          form: PrivateKeyDerForm.expanded,
+        );
+        expect(engine.importPrivateKeyDer(der).keyId, kp.keyId);
+      }
+      final enc = engine.generateEncryptionKeyPair();
+      final der = engine.exportPrivateKeyDer(
+        enc.privateKey,
+        form: PrivateKeyDerForm.expanded,
+      );
+      expect(engine.importPrivateKeyDer(der).keyId, enc.keyId);
+    });
+
     test('envelope, multi-recipient and hybrid', () {
       final a = engine.generateEncryptionKeyPair();
       final b = engine.generateEncryptionKeyPair(algorithm: KemAlgorithm.xWing);

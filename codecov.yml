@@ -1,0 +1,9 @@
+# The VM tests run in four coverage shards (see .github/workflows/dart.yml),
+# each uploading part of the coverage. Wait for all of them before
+# reporting, so the status checks never judge a partial upload.
+codecov:
+  notify:
+    after_n_builds: 4
+
+comment:
+  after_n_builds: 4

@@ -6,11 +6,20 @@
   has been performed. The formats are custom (built from standardized parts)
   and should be reviewed before high-assurance use.
 - The underlying primitives are validated here against official
-  known-answer vectors (NIST ACVP for ML-KEM/ML-DSA, the X-Wing and
+  known-answer vectors (NIST ACVP for ML-KEM/ML-DSA/SLH-DSA, the X-Wing and
   HPKE-PQ drafts, Wycheproof for AES-GCM/ChaCha20-Poly1305/HKDF/HMAC/X25519,
-  RFC 9106 for Argon2id) and against OpenSSL 3.6 for ML-KEM, ML-DSA and
-  SLH-DSA. That is **algorithm conformance evidence**, not a FIPS 140 / CMVP
-  module validation, and none of the dependencies is FIPS-validated either.
+  RFC 9106 for Argon2id), against Wycheproof's ML-KEM and ML-DSA edge cases
+  (malformed and out-of-range keys, ciphertexts and signatures), against the
+  example keys of RFC 9881 (ML-DSA) and RFC 9935 (ML-KEM), including their
+  deliberately inconsistent keys, and against OpenSSL 3.6 for ML-KEM, ML-DSA
+  and SLH-DSA. That is **algorithm conformance evidence**, not a FIPS 140 /
+  CMVP module validation, and none of the dependencies is FIPS-validated
+  either.
+- Imported **expanded private keys are checked for consistency**: ML-KEM
+  keys by the FIPS 203 hash check and a pairwise-consistency test (an
+  encapsulation must decapsulate); ML-DSA keys by recomputing
+  `t = A·s1 + s2` (FIPS 204), which checks the s1/s2 ranges and `t0` and
+  derives the public key.
 
 ## What the primitives provide
 
