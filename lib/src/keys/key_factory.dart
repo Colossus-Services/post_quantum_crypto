@@ -9,6 +9,7 @@ import '../errors.dart';
 import 'key_metadata.dart';
 import 'keys.dart';
 import 'ml_dsa_expanded.dart';
+import 'slh_dsa_expanded.dart';
 
 /// Key generation and raw import. Internal; reached through the engine.
 @internal
@@ -146,7 +147,9 @@ final class KeyFactory {
   /// Imports an expanded signing secret key. For ML-DSA the public key is
   /// recomputed from the secret key (which also checks s1, s2 and t0, see
   /// ml_dsa_expanded.dart) and must match `tr = H(pk)` and [publicKey] when
-  /// given; for SLH-DSA it is read from the secret key itself.
+  /// given. For SLH-DSA, `PK.root` is recomputed from `SK.seed` and
+  /// `PK.seed` (slh_dsa_expanded.dart) and must match the secret key and
+  /// [publicKey] when given.
   SigningPrivateKey signingPrivateKeyFromExpanded(
     SignatureAlgorithm algorithm,
     Uint8List secretKey,
@@ -159,8 +162,8 @@ final class KeyFactory {
     }
     final Uint8List pk;
     if (algorithm.isSlhDsa) {
-      final n = algorithm.publicKeyLength ~/ 2;
-      pk = Uint8List.fromList(secretKey.sublist(2 * n, 4 * n));
+      // Recomputes PK.root, so an inconsistent key is rejected.
+      pk = slhDsaPublicKeyFromSecretKey(algorithm, secretKey);
       if (publicKey != null && !constantTimeEquals(pk, publicKey)) {
         throw const InvalidKeyException('Public key does not match');
       }

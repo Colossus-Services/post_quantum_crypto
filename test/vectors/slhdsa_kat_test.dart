@@ -13,6 +13,29 @@ SignatureAlgorithm _alg(Object? name) =>
 void main() {
   final backend = standardCryptoBackend;
 
+  group('SLH-DSA keyGen (NIST ACVP, FIPS 205)', () {
+    for (final (g, t) in acvpTests('acvp_slhdsa_keygen.json')) {
+      final alg = _alg(g['parameterSet']);
+      test('${alg.standardName} tcId ${t['tcId']}', () {
+        final sk = hex(t['sk']);
+        // FIPS 205: sk = SK.seed || SK.prf || PK.seed || PK.root.
+        expect(sk, [
+          ...hex(t['skSeed']),
+          ...hex(t['skPrf']),
+          ...hex(t['pkSeed']),
+          ...hex(t['pk']).sublist(alg.publicKeyLength ~/ 2),
+        ]);
+        // The import check recomputes PK.root and accepts the official key.
+        final key = engine.importSigningPrivateKeyExpanded(
+          sk,
+          publicKey: hex(t['pk']),
+          algorithm: alg,
+        );
+        expect(key.publicKey.bytes, hex(t['pk']));
+      });
+    }
+  });
+
   group('SLH-DSA sigVer external/pure (NIST ACVP, FIPS 205)', () {
     for (final (g, t) in acvpTests('acvp_slhdsa_sigver.json')) {
       final alg = _alg(g['parameterSet']);

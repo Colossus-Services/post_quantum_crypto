@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:post_quantum_crypto/src/keys/ml_dsa_expanded.dart';
+import 'package:post_quantum_crypto/src/keys/slh_dsa_expanded.dart';
 import 'package:test/test.dart';
 
 import '../support/test_engine.dart';
@@ -123,6 +124,93 @@ void main() {
         expect(
           engine.verify(bytesOf('m'), signature: sig, publicKey: kp.publicKey),
           isTrue,
+        );
+      });
+    });
+  }
+
+  // The "s" sets work the same way but each check takes 1-2 s; they are
+  // covered by the ACVP keyGen vectors.
+  for (final alg in [
+    SignatureAlgorithm.slhDsaShake128f,
+    SignatureAlgorithm.slhDsaShake192f,
+    SignatureAlgorithm.slhDsaShake256f,
+  ]) {
+    group('${alg.standardName} secret key', () {
+      final kp = engine.generateSigningKeyPair(algorithm: alg);
+      final sk = kp.privateKey.secretKey;
+      final n = alg.publicKeyLength ~/ 2;
+
+      Uint8List mutate(int index) => Uint8List.fromList(sk)..[index] ^= 1;
+
+      test('the unmodified key imports, with or without its public key', () {
+        expect(
+          engine.importSigningPrivateKeyExpanded(sk, algorithm: alg).publicKey,
+          kp.publicKey,
+        );
+        expect(
+          engine
+              .importSigningPrivateKeyExpanded(
+                sk,
+                publicKey: kp.publicKey.bytes,
+                algorithm: alg,
+              )
+              .keyId,
+          kp.keyId,
+        );
+      });
+
+      test('SK.seed, PK.seed and PK.root changes are detected', () {
+        final der = engine.exportPrivateKeyDer(kp.privateKey);
+        for (final (index, part) in [
+          (0, 'SK.seed'),
+          (2 * n, 'PK.seed'),
+          (3 * n, 'PK.root'),
+        ]) {
+          final bad = mutate(index);
+          expect(
+            () => engine.importSigningPrivateKeyExpanded(bad, algorithm: alg),
+            throwsA(isA<InvalidKeyException>()),
+            reason: part,
+          );
+          // PKCS#8 (RFC 9909): the raw secret key is the last field.
+          final patched = Uint8List.fromList(der)
+            ..setRange(der.length - bad.length, der.length, bad);
+          expect(
+            () => engine.importPrivateKeyDer(patched),
+            throwsA(isA<InvalidKeyException>()),
+            reason: '$part (PKCS#8)',
+          );
+        }
+      });
+
+      test(
+        'SK.prf is not constrained by FIPS 205, so it cannot be checked',
+        () {
+          // SK.prf only randomizes signing; the key still signs validly.
+          final key = engine.importSigningPrivateKeyExpanded(
+            mutate(n),
+            algorithm: alg,
+          );
+          expect(key.publicKey, kp.publicKey);
+          if (alg == SignatureAlgorithm.slhDsaShake128f) {
+            final sig = engine.sign(bytesOf('m'), privateKey: key);
+            expect(
+              engine.verify(
+                bytesOf('m'),
+                signature: sig,
+                publicKey: kp.publicKey,
+              ),
+              isTrue,
+            );
+          }
+        },
+      );
+
+      test('the check refuses other algorithms', () {
+        expect(
+          () => slhDsaPublicKeyFromSecretKey(SignatureAlgorithm.mlDsa44, sk),
+          throwsArgumentError,
         );
       });
     });

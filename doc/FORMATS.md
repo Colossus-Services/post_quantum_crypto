@@ -210,8 +210,8 @@ bit3 replaces), then the present fields: `u64 createdMs`, `u64 expiresMs`,
 sign 4, verify 8; 0 = unrestricted), `bytes16 label`, `[32 replacesKeyId]`.
 
 On import, a private key is re-derived from its material and must reproduce
-the stored public key. SLH-DSA is the exception: its secret key contains the
-public key, which is taken as stored (see SECURITY.md).
+the stored public key. For SLH-DSA, whose secret key contains the public
+key, `PK.root` is recomputed from `SK.seed` and `PK.seed` and must match.
 
 Seed forms: ML-KEM `d || z` (64 bytes), X-Wing 32 bytes, ML-DSA `ξ`
 (32 bytes); SLH-DSA has no separate seed and stores its full secret key.

@@ -1,3 +1,36 @@
+## 2.2.0
+
+### Fixed
+
+- **SLH-DSA private keys are checked on import.** `PK.root` is recomputed
+  from `SK.seed` and `PK.seed` (FIPS 205 Algorithm 18) and must match.
+  Before, a corrupted or inconsistent key (PKCS#8, raw bytes, key record)
+  imported silently and then produced only signatures that fail
+  verification. This closes the last limitation on private-key import
+  listed in SECURITY.md.
+  - Cost: one key generation per import and per key-store load. That is
+    milliseconds for the "f" parameter sets and 1–2 s for the "s" sets.
+
+### Changed
+
+- **pqcrypto is pinned to 0.4.3.x** (`>=0.4.3 <0.4.4`).
+  - pqcrypto 0.4.3 does not export FIPS 205 Algorithm 18, so the check
+    imports it from pqcrypto's `src/` (`lib/src/keys/slh_dsa_expanded.dart`).
+  - The export is proposed upstream in
+    [turkananation/pqcrypto#69](https://github.com/turkananation/pqcrypto/pull/69).
+    Once it is released, the import switches to the public API and the
+    constraint goes back to a caret range.
+
+### Tests
+
+- NIST ACVP SLH-DSA keyGen vectors (SHAKE parameter sets): the official
+  secret keys pass the check and yield the official public keys.
+- Mutation tests for SLH-DSA (128f/192f/256f):
+  - `SK.seed`, `PK.seed` and `PK.root` changes are rejected, via raw and
+    PKCS#8 import;
+  - `SK.prf`, which FIPS 205 leaves unconstrained, is accepted and still
+    signs.
+
 ## 2.1.1
 
 ### Documentation
