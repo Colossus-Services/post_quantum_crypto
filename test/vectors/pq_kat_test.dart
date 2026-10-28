@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:post_quantum_crypto/src/algorithms/algorithms.dart';
 import 'package:post_quantum_crypto/src/errors.dart';
 import 'package:post_quantum_crypto/src/kem/kem_scheme.dart';
+import 'package:post_quantum_crypto/src/keys/ml_dsa_expanded.dart';
 import 'package:post_quantum_crypto/src/providers/default_backend.dart';
 import 'package:test/test.dart';
 
@@ -80,6 +81,12 @@ void main() {
         final kp = sig.generateFromSeed(hex(t['seed']));
         expect(kp.publicKey, hex(t['pk']));
         expect(kp.secretKey, hex(t['sk']));
+        // The package's own FIPS 204 arithmetic (t = A·s1 + s2) recovers
+        // the official public key from the official secret key.
+        expect(
+          mlDsaPublicKeyFromExpanded(_sig(g['parameterSet']), hex(t['sk'])),
+          hex(t['pk']),
+        );
       });
     }
   });

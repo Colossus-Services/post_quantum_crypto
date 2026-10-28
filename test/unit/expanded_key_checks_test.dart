@@ -1,0 +1,176 @@
+/// Consistency checks on imported expanded private keys, one key component
+/// at a time, for every parameter set.
+///
+/// ML-DSA (FIPS 204): sk = rho || K || tr || s1 || s2 || t0; the import
+/// recomputes t = A·s1 + s2. ML-KEM (FIPS 203): dk = dk_PKE || ek || H(ek)
+/// || z; the import checks H(ek) and runs a pairwise-consistency test.
+/// Components that the standards leave unconstrained (ML-DSA's K, ML-KEM's
+/// z) cannot be checked, and these tests pin that down too.
+library;
+
+import 'dart:typed_data';
+
+import 'package:post_quantum_crypto/post_quantum_crypto.dart';
+import 'package:post_quantum_crypto/src/keys/ml_dsa_expanded.dart';
+import 'package:test/test.dart';
+
+import '../support/test_engine.dart';
+
+/// Byte layout of an ML-DSA expanded secret key.
+typedef _MlDsaLayout = ({int s1, int s2, int t0, int etaBits});
+
+_MlDsaLayout _layout(SignatureAlgorithm alg) {
+  final (k, l, eta) = switch (alg) {
+    SignatureAlgorithm.mlDsa44 => (4, 4, 2),
+    SignatureAlgorithm.mlDsa65 => (6, 5, 4),
+    _ => (8, 7, 2),
+  };
+  final etaBits = eta == 2 ? 3 : 4;
+  final polyBytes = 32 * etaBits;
+  const s1 = 128;
+  final s2 = s1 + l * polyBytes;
+  return (s1: s1, s2: s2, t0: s2 + k * polyBytes, etaBits: etaBits);
+}
+
+void main() {
+  const mlDsa = [
+    SignatureAlgorithm.mlDsa44,
+    SignatureAlgorithm.mlDsa65,
+    SignatureAlgorithm.mlDsa87,
+  ];
+
+  for (final alg in mlDsa) {
+    group('${alg.standardName} expanded key', () {
+      final kp = deterministicEngine(11).generateSigningKeyPair(algorithm: alg);
+      final sk = kp.privateKey.secretKey;
+      final layout = _layout(alg);
+
+      /// Imports [mutated] both with the public key and on its own (PKCS#8).
+      void expectRejected(Uint8List mutated, String reason) {
+        expect(
+          () => engine.importSigningPrivateKeyExpanded(
+            mutated,
+            publicKey: kp.publicKey.bytes,
+            algorithm: alg,
+          ),
+          throwsA(isA<InvalidKeyException>()),
+          reason: '$reason (with public key)',
+        );
+        final der = engine.exportPrivateKeyDer(
+          kp.privateKey,
+          form: PrivateKeyDerForm.expanded,
+        );
+        // The expanded key is the last field of the PKCS#8 encoding.
+        final patched = Uint8List.fromList(der)
+          ..setRange(der.length - mutated.length, der.length, mutated);
+        expect(
+          () => engine.importPrivateKeyDer(patched),
+          throwsA(isA<InvalidKeyException>()),
+          reason: '$reason (PKCS#8)',
+        );
+      }
+
+      Uint8List mutate(void Function(Uint8List) change) =>
+          Uint8List.fromList(sk)..apply(change);
+
+      test('the layout matches the key size; the public key is recomputed', () {
+        final t0Bytes = (layout.t0 - layout.s2) ~/ (32 * layout.etaBits) * 416;
+        expect(layout.t0 + t0Bytes, sk.length);
+        expect(mlDsaPublicKeyFromExpanded(alg, sk), kp.publicKey.bytes);
+      });
+
+      test('rho, tr, t0 and in-range s2 changes are detected', () {
+        expectRejected(mutate((b) => b[0] ^= 1), 'rho');
+        expectRejected(mutate((b) => b[64] ^= 1), 'tr');
+        expectRejected(mutate((b) => b[layout.t0] ^= 1), 't0');
+        // Another valid s2 coefficient: in range, but t no longer matches.
+        expectRejected(mutate((b) => b[layout.s2] ^= 1), 's2 (in range)');
+      });
+
+      test('s1 and s2 coefficients out of range are detected', () {
+        final mask = (1 << layout.etaBits) - 1; // packed value 2^bits − 1
+        for (final start in [layout.s1, layout.s2]) {
+          expect(
+            () => mlDsaPublicKeyFromExpanded(
+              alg,
+              mutate((b) => b[start] |= mask),
+            ),
+            throwsA(
+              isA<InvalidKeyException>().having(
+                (e) => e.message,
+                'message',
+                contains('out of range'),
+              ),
+            ),
+          );
+        }
+      });
+
+      test('K is not constrained by FIPS 204, so it cannot be checked', () {
+        final other = mutate((b) => b[32] ^= 1);
+        final key = engine.importSigningPrivateKeyExpanded(
+          other,
+          publicKey: kp.publicKey.bytes,
+          algorithm: alg,
+        );
+        // Still a valid key for the same public key.
+        final sig = engine.sign(bytesOf('m'), privateKey: key);
+        expect(
+          engine.verify(bytesOf('m'), signature: sig, publicKey: kp.publicKey),
+          isTrue,
+        );
+      });
+    });
+  }
+
+  for (final alg in [
+    KemAlgorithm.mlKem512,
+    KemAlgorithm.mlKem768,
+    KemAlgorithm.mlKem1024,
+  ]) {
+    group('${alg.standardName} expanded key', () {
+      final kp = deterministicEngine(
+        12,
+      ).generateEncryptionKeyPair(algorithm: alg);
+      final dk = kp.privateKey.secret.part(0);
+      final k = (alg.publicKeyLength - 32) ~/ 384;
+      final ekAt = 384 * k;
+      final hashAt = ekAt + alg.publicKeyLength;
+      final zAt = hashAt + 32;
+
+      Uint8List mutate(int index) => Uint8List.fromList(dk)..[index] ^= 1;
+
+      EncryptionPrivateKey import(Uint8List bytes) =>
+          engine.importEncryptionPrivateKeyExpanded(bytes, algorithm: alg);
+
+      test('the unmodified key imports', () {
+        expect(import(dk).publicKey, kp.publicKey);
+      });
+
+      test('s (pairwise consistency), ek and H(ek) changes are detected', () {
+        for (final (index, part) in [
+          (0, 's'),
+          (ekAt, 'ek'),
+          (hashAt, 'H(ek)'),
+        ]) {
+          expect(
+            () => import(mutate(index)),
+            throwsA(isA<InvalidKeyException>()),
+            reason: part,
+          );
+        }
+      });
+
+      test('z is not constrained by FIPS 203, so it cannot be checked', () {
+        // z only feeds implicit rejection; honest ciphertexts still decrypt.
+        final key = import(mutate(zAt));
+        final env = engine.encrypt(bytesOf('m'), recipients: [kp.publicKey]);
+        expect(engine.decrypt(env, privateKey: key), bytesOf('m'));
+      });
+    });
+  }
+}
+
+extension on Uint8List {
+  void apply(void Function(Uint8List) change) => change(this);
+}
