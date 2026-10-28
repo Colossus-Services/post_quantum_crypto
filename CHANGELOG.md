@@ -1,3 +1,18 @@
+## 2.1.1
+
+### Documentation
+
+README brought up to date with 2.1.0:
+
+- Key import validation: expanded keys are checked for consistency, and an
+  expanded-only ML-DSA key imports on its own.
+- Supported platforms: macOS and Windows run the platform-sensitive tests in
+  CI, Linux runs the full suite.
+- Architecture: the ML-DSA key check uses pqcrypto's SHAKE128 directly.
+- The third-party test vectors are in the repository, not in the package.
+
+No code changes.
+
 ## 2.1.0
 
 ### Fixed

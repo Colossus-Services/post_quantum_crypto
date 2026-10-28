@@ -246,7 +246,8 @@ authenticated**: obtain the responder's public key through a trusted channel.
 final pk = engine.importEncryptionPublicKey(bytes);
 final sk = engine.importEncryptionPrivateKeySeed(seed64);
 
-// X.509 SPKI / PKCS#8 (seed, expanded or both): compatible with OpenSSL 3.5+.
+// X.509 SPKI / PKCS#8 (seed, expanded or both): compatible with OpenSSL 3.5+
+// and byte-identical to the RFC 9881 / RFC 9935 examples.
 final pem = engine.exportPublicKeyPem(signer.publicKey);
 final priv = engine.importPrivateKeyPem(File('key.pem').readAsStringSync());
 
@@ -257,6 +258,18 @@ final again = engine.decodeEncryptionPublicKey(record);
 // Fingerprint for display.
 print(recipient.keyId.fingerprint); // e.g. f29b:f240:bb26:...
 ```
+
+Imported private keys are checked before use. A seed is expanded and
+compared with any expanded key or public key that comes with it. An
+expanded key without its seed is checked for internal consistency:
+
+- **ML-KEM:** the FIPS 203 hash check, plus a pairwise-consistency test (an
+  encapsulation must decapsulate).
+- **ML-DSA:** the public key is recomputed (FIPS 204 `t = A·s1 + s2`), which
+  rejects out-of-range or inconsistent keys. An expanded-only ML-DSA key
+  therefore imports on its own, without its public key.
+
+Keys that fail raise `InvalidKeyException`; nothing is left half-imported.
 
 ### Password-protected keys
 
@@ -334,7 +347,9 @@ stream reaches the caller of `encryptStream`/`decryptStream` as is.
 The library depends only on package-owned interfaces (`KemPrimitive`,
 `SignaturePrimitive`, `AeadCipher`, `Kdf`, `HashFunction`, `X25519Primitive`,
 `Argon2idPrimitive`, ...). The third-party libraries live in single adapter
-files under `lib/src/providers/`:
+files under `lib/src/providers/`. The one exception is the ML-DSA
+expanded-key check, which uses pqcrypto's SHAKE128 directly. It validates
+key structure rather than performing a pluggable cryptographic operation.
 
 | Provider | Library | Primitives |
 |---|---|---|
@@ -352,7 +367,9 @@ final engine = PostQuantumCryptoEngine(
 ```
 
 The known-answer suite in `test/vectors/` runs against the configured
-providers; a replacement should pass it unchanged.
+providers; a replacement should pass it unchanged. Its third-party vector
+files live in the [repository](https://github.com/Colossus-Services/post_quantum_crypto/tree/main/test/vectors)
+and are not included in the published package.
 
 [pqcrypto]: https://pub.dev/packages/pqcrypto
 [cryptography]: https://pub.dev/packages/cryptography
@@ -362,7 +379,8 @@ providers; a replacement should pass it unchanged.
 
 | Platform | Status |
 |---|---|
-| Dart VM (Linux, macOS, Windows) | ✔ full suite (CI) |
+| Dart VM, Linux | ✔ full suite (CI) |
+| Dart VM, macOS / Windows | ✔ platform-sensitive tests (CI): files, permissions, processes, isolates; the rest is pure Dart, identical on every OS |
 | Flutter Android / iOS / desktop | ✔ pure Dart, same code as the VM (not separately CI-tested) |
 | Web, dart2js | ✔ `test/browser` in Chrome (CI) |
 | Web, dart2wasm | ✔ `test/browser` in Chrome (CI) |
