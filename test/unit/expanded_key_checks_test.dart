@@ -264,6 +264,32 @@ void main() {
     });
   }
 
+  group('provider key generation', () {
+    final pq = standardCryptoBackend.postQuantum;
+
+    test('ML-DSA generate is seeded key generation', () {
+      final p = pq.signature(SignatureAlgorithm.mlDsa44);
+      final randomness = Uint8List(p.keyGenerationRandomnessLength)..[0] = 1;
+      expect(
+        p.generate(randomness).publicKey,
+        p.generateFromSeed(randomness).publicKey,
+      );
+    });
+
+    test('SLH-DSA has no seed form and checks its randomness length', () {
+      final p = pq.signature(SignatureAlgorithm.slhDsaShake128f);
+      expect(p.seedLength, isNull);
+      expect(
+        () => p.generateFromSeed(Uint8List(48)),
+        throwsA(isA<UnsupportedAlgorithmException>()),
+      );
+      expect(
+        () => p.generate(Uint8List(p.keyGenerationRandomnessLength - 1)),
+        throwsA(isA<InvalidInputException>()),
+      );
+    });
+  });
+
   test('password imports and the key store pass the option through', () async {
     const alg = SignatureAlgorithm.slhDsaShake128f;
     final kp = engine.generateSigningKeyPair(algorithm: alg);
