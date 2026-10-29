@@ -13,13 +13,9 @@
 
 ### Changed
 
-- **pqcrypto is pinned to 0.4.3.x** (`>=0.4.3 <0.4.4`).
-  - pqcrypto 0.4.3 does not export FIPS 205 Algorithm 18, so the check
-    imports it from pqcrypto's `src/` (`lib/src/keys/slh_dsa_expanded.dart`).
-  - The export is proposed upstream in
-    [turkananation/pqcrypto#69](https://github.com/turkananation/pqcrypto/pull/69).
-    Once it is released, the import switches to the public API and the
-    constraint goes back to a caret range.
+- **pqcrypto: ^0.4.4.** The check uses `SlhDsa.generateKeyPairSeeded`
+  (FIPS 205 Algorithm 18), exported from pqcrypto 0.4.4 onwards
+  ([turkananation/pqcrypto#69](https://github.com/turkananation/pqcrypto/pull/69)).
 
 ### Tests
 

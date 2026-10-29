@@ -354,11 +354,8 @@ The library depends only on package-owned interfaces (`KemPrimitive`,
 files under `lib/src/providers/`. The exceptions are the private-key
 checks, which validate key structure rather than perform a pluggable
 cryptographic operation. The ML-DSA check uses pqcrypto's SHAKE128
-directly. The SLH-DSA check uses pqcrypto's FIPS 205 Algorithm 18, which
-pqcrypto 0.4.3 does not export yet; it is imported from pqcrypto's `src/`,
-so pqcrypto is pinned to 0.4.3.x until
-[that export](https://github.com/turkananation/pqcrypto/pull/69) is
-released.
+directly. The SLH-DSA check uses pqcrypto's FIPS 205 Algorithm 18
+(`SlhDsa.generateKeyPairSeeded`).
 
 | Provider | Library | Primitives |
 |---|---|---|

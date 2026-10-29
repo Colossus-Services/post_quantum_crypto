@@ -7,20 +7,12 @@
 /// (`slh_keygen_internal`) and comparing detects a corrupted or
 /// inconsistent key, which the signing primitive would otherwise accept
 /// and use to produce only signatures that fail verification.
-///
-/// Algorithm 18 is implemented in pqcrypto but, in pqcrypto 0.4.3, only as
-/// the non-exported `SlhDsaInternal`. Until it is public
-/// (https://github.com/turkananation/pqcrypto/pull/69) it is imported from
-/// pqcrypto's `src/`, which is why pubspec.yaml pins pqcrypto to 0.4.3.x.
 library;
 
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
-import 'package:pqcrypto/pqcrypto.dart' show SlhDsaParams;
-// pqcrypto 0.4.3 does not export Algorithm 18; see the library comment.
-// ignore: implementation_imports
-import 'package:pqcrypto/src/algos/slhdsa/slhdsa.dart' show SlhDsaInternal;
+import 'package:pqcrypto/pqcrypto.dart' show SlhDsa, SlhDsaParams;
 
 import '../algorithms/algorithms.dart';
 import '../encoding/bytes.dart';
@@ -45,7 +37,7 @@ Uint8List slhDsaPublicKeyFromSecretKey(
     _ => throw ArgumentError.value(algorithm, 'algorithm', 'not SLH-DSA'),
   };
   final n = params.n;
-  final (publicKey, recomputed) = SlhDsaInternal.generateKeyPairSeeded(
+  final (publicKey, recomputed) = SlhDsa.generateKeyPairSeeded(
     params,
     Uint8List.sublistView(sk, 0, n),
     Uint8List.sublistView(sk, n, 2 * n),

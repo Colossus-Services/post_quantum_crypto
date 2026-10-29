@@ -21,11 +21,7 @@ dependencies:
   cryptography: ^2.9.0
   meta: ^1.19.0
   pointycastle: ^4.0.0
-  # Pinned to 0.4.3.x: the SLH-DSA key check imports pqcrypto's non-exported
-  # SlhDsaInternal (lib/src/keys/slh_dsa_expanded.dart). Relax to a caret
-  # constraint once pqcrypto exports it
-  # (https://github.com/turkananation/pqcrypto/pull/69).
-  pqcrypto: '>=0.4.3 <0.4.4'
+  pqcrypto: ^0.4.4
 
 dev_dependencies:
   dependency_validator: ^5.1.0
