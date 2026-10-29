@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import '../errors.dart';
@@ -132,7 +131,7 @@ abstract final class CanonicalMap {
       previous = key;
       final value = r.bytes32(max: limits.maxValueBytes);
       try {
-        out[utf8.decode(key)] = utf8.decode(value);
+        out[utf8String(key)] = utf8String(value);
       } on FormatException {
         throw const MalformedDataException('Map entry is not valid UTF-8');
       }

@@ -1,3 +1,83 @@
+## 2.2.1
+
+### Security
+
+- **A leading U+FEFF no longer collapses map entries.** Dart's
+  `utf8.decode` drops a leading byte-order mark (`EF BB BF`), so the
+  canonical-map keys `a` and `U+FEFF a` both decoded to `a`. The second
+  entry silently overrode the first:
+  - in an authenticated context, `{..., 'tenant': 'A', 'U+FEFF tenant': 'B'}`
+    parsed as `tenant: B` and passed `requiredContext: {'tenant': 'B'}`;
+  - signed metadata was affected the same way;
+  - two manifest paths could read as the same path.
+
+  Canonical maps, manifest paths and key metadata now decode losslessly
+  (`utf8String`, the inverse of `utf8Bytes`), in linear time however many
+  BOMs a value holds.
+- **Raw signatures and signed objects are separated.** A detached
+  signature or manifest is a signature over
+  `post_quantum_crypto/v1/<kind>\0 || body` under the caller's FIPS
+  context. A raw signature over a message with that prefix was therefore
+  also a valid signed object. A service that raw-signed messages chosen by
+  others with its release key could be made to sign content it never saw.
+  - Raw `sign` now throws `InvalidInputException` for such messages.
+  - Raw `verify` now returns `false` for them, so a published signed object
+    no longer verifies as a raw signature.
+  - SECURITY.md notes that the guard does not cover the same key raw-signing
+    in other implementations.
+- **`FileKeyStorage` stages key files privately.** Before, a new temporary
+  key file existed with the umask's permissions (typically 0644) until it
+  was restricted. Another local user who opened it in that window kept read
+  access to the key bytes written afterwards.
+  - Key files are now written in an owner-only staging directory,
+    `.pending` (`chmod 700`, its mode checked on every write), and renamed
+    into place.
+  - The permissions of the storage directory itself are left as the caller
+    set them.
+  - `chmod` is given absolute paths, so a relative directory starting with
+    `-` is not read as an option.
+
+### Fixed
+
+- Private-key copies are wiped:
+  - `KeyStore` revocation, rotation and restore destroy the private keys
+    they load, including on a restore that fails partway;
+  - key generation wipes its seed;
+  - raw private-key imports wipe their temporary copy of the caller's bytes;
+  - signing wipes its hedging randomness.
+- The `KeyStore`'s own operations no longer pay the SLH-DSA key check (1–2 s
+  per "s" key) for keys they only carry over. This covers revocation,
+  rotation, backup and restore, and `changeKeyPassword` does the same. A key
+  is still checked when it is loaded for use with `get`.
+- `verifySlhDsaKey: false` is also honoured for an SLH-DSA key record in
+  seed form.
+- `importSigningPrivateKeyExpanded` documents the SLH-DSA check and its
+  cost.
+- Raw and signed-object signing share one implementation.
+
+### Tests
+
+- Regression tests for each fix (`test/unit/review_regressions_test.dart`):
+  - U+FEFF-prefixed context keys, signed metadata, manifest paths and key
+    labels, and a 64 KiB value made only of BOMs;
+  - raw signing and verification of signed-object domains, and near misses
+    that still sign;
+  - wiping of key-generation seeds and signing randomness, through a spying
+    random source;
+  - key-store revoke, rotate and restore leaving usable keys, and a backup
+    with a bad record restoring nothing;
+  - the opt-out for seed-form SLH-DSA records;
+  - `FileKeyStorage` staging, checked on POSIX and run on Linux, macOS and
+    Windows.
+
+  Seven of them fail without the fixes.
+
+### Documentation
+
+- `test/README.md` describes each test directory, the tags and the NIST
+  ACVP vectors: which files, parameter sets and subsets, and what each test
+  checks.
+
 ## 2.2.0
 
 ### Fixed

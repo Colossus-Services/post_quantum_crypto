@@ -13,7 +13,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
@@ -33,6 +32,22 @@ final Uint8List _detachedDomain = utf8Bytes(
 final Uint8List _manifestDomain = utf8Bytes(
   'post_quantum_crypto/v1/manifest\u0000',
 );
+
+/// Whether [message] starts with a signed-object domain. A raw signature
+/// over such a message would also be a valid signed object, so raw signing
+/// refuses it.
+@internal
+bool isSignedObjectMessage(List<int> message) =>
+    _startsWith(message, _detachedDomain) ||
+    _startsWith(message, _manifestDomain);
+
+bool _startsWith(List<int> data, Uint8List prefix) {
+  if (data.length < prefix.length) return false;
+  for (var i = 0; i < prefix.length; i++) {
+    if (data[i] != prefix[i]) return false;
+  }
+  return true;
+}
 
 const HashAlgorithm _digestAlgorithm = HashAlgorithm.sha384;
 
@@ -340,7 +355,7 @@ final class SignedManifest {
           final digest = r.fixed(_digestAlgorithm.digestLength);
           final String p;
           try {
-            p = utf8.decode(path);
+            p = utf8String(path);
           } on FormatException {
             throw const MalformedDataException('Invalid UTF-8 path');
           }
@@ -417,16 +432,23 @@ final class SignedObjectService {
 
   SignedObjectService(this._ctx);
 
-  Uint8List _sign(SigningPrivateKey key, Uint8List message, Uint8List context) {
+  /// Hedged FIPS 204/205 signing of [message] under [context], after the
+  /// policy checks; the one signing path of the engine (raw and signed
+  /// objects).
+  Uint8List signMessage(
+    SigningPrivateKey key,
+    Uint8List message,
+    Uint8List context,
+  ) {
     _ctx.policy.checkSignature(key.algorithm);
     _ctx.policy.checkKeyMetadata(key.metadata, KeyUsage.sign);
     final prim = _ctx.signature(key.algorithm);
-    return prim.sign(
-      key.secretKey,
-      message,
-      context,
-      _ctx.randomBytes(prim.randomnessLength),
-    );
+    final rnd = _ctx.randomBytes(prim.randomnessLength);
+    try {
+      return prim.sign(key.secretKey, message, context, rnd);
+    } finally {
+      zeroize(rnd);
+    }
   }
 
   void _verify(
@@ -470,7 +492,11 @@ final class SignedObjectService {
       digest,
       length,
     );
-    final sig = _sign(key, concatBytes([_detachedDomain, body]), ctxBytes);
+    final sig = signMessage(
+      key,
+      concatBytes([_detachedDomain, body]),
+      ctxBytes,
+    );
     final w = ByteWriter()
       ..raw(body)
       ..bytes32(sig);
@@ -581,7 +607,11 @@ final class SignedObjectService {
       metadata,
       entries,
     );
-    final sig = _sign(key, concatBytes([_manifestDomain, body]), ctxBytes);
+    final sig = signMessage(
+      key,
+      concatBytes([_manifestDomain, body]),
+      ctxBytes,
+    );
     final w = ByteWriter()
       ..raw(body)
       ..bytes32(sig);

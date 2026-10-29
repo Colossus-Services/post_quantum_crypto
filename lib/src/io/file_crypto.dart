@@ -155,9 +155,15 @@ extension PostQuantumCryptoFiles on PostQuantumCryptoEngine {
 
 /// [KeyStorage] in a directory, one file per key.
 ///
-/// Files are restricted to owner-only permissions on POSIX systems
-/// (`chmod 600`, applied before any key bytes are written). Temporary
-/// files are named `<key>.<random>.tmp` and are not listed as keys. Writes
+/// Key files are restricted to their owner on POSIX systems (`chmod 600`,
+/// before any key bytes are written). They are written in a staging
+/// subdirectory, `.pending`, that the storage creates and keeps owner-only
+/// (`chmod 700`), and then renamed into [directory]. A new file has the
+/// umask's permissions until it is restricted, and a handle opened in that
+/// window would keep its access; the private staging directory keeps other
+/// users from opening it at all. The permissions of [directory] itself are
+/// left as the caller set them. Temporary files are named
+/// `<key>.<random>.tmp` and are not listed as keys. Writes
 /// through one instance are serialized per key; concurrent writers in
 /// different processes are not coordinated (on Windows the losing rename
 /// fails). This is ordinary file storage: it is not
@@ -210,16 +216,18 @@ final class FileKeyStorage implements KeyStorage {
   }
 
   Future<void> _write(String name, Uint8List data) async {
-    await directory.create(recursive: true);
+    final staging = await _stagingDirectory();
     final f = _file(name);
     // A unique temporary name: concurrent writes of the same key cannot
     // clobber each other's partial file.
     final suffix = TextEncoding.toHex(SystemSecureRandom.instance.nextBytes(8));
-    final tmp = File('${f.path}.$suffix.tmp');
+    final tmp = File(
+      '${staging.path}${Platform.pathSeparator}$name.$suffix.tmp',
+    );
     try {
       // Restrict permissions before any key bytes are written.
       await tmp.writeAsBytes(const [], flush: true);
-      await _restrictPermissions(tmp);
+      await _restrictPermissions(tmp.path, '600');
       await tmp.writeAsBytes(data, flush: true);
       await tmp.rename(f.path);
     } catch (_) {
@@ -228,14 +236,32 @@ final class FileKeyStorage implements KeyStorage {
     }
   }
 
-  /// `chmod 600` on POSIX systems. Fails closed if chmod runs and reports an
-  /// error. Skipped where there is no chmod (Windows; the iOS sandbox, where
-  /// `Process` is unavailable and app containers are already private).
-  static Future<void> _restrictPermissions(File file) async {
-    if (Platform.isWindows || Platform.isIOS) return;
+  /// The owner-only staging directory, created on first use. Its mode is
+  /// checked on every write (a `stat`, no process) and restricted again if
+  /// group or other bits are set, so files are never created in it while
+  /// others can reach them.
+  Future<Directory> _stagingDirectory() async {
+    final staging = Directory(
+      '${directory.path}${Platform.pathSeparator}.pending',
+    );
+    await staging.create(recursive: true);
+    if (_hasPosixModes && (await staging.stat()).mode & 0x3f != 0) {
+      await _restrictPermissions(staging.path, '700');
+    }
+    return staging;
+  }
+
+  static bool get _hasPosixModes => !Platform.isWindows && !Platform.isIOS;
+
+  /// `chmod <mode>` on POSIX systems. Fails closed if chmod runs and reports
+  /// an error. Skipped where there is no chmod (Windows; the iOS sandbox,
+  /// where `Process` is unavailable and app containers are already private).
+  static Future<void> _restrictPermissions(String path, String mode) async {
+    if (!_hasPosixModes) return;
     final ProcessResult r;
     try {
-      r = await Process.run('chmod', ['600', file.path]);
+      // An absolute path never starts with '-', so it is not an option.
+      r = await Process.run('chmod', [mode, File(path).absolute.path]);
     } on ProcessException {
       // No chmod binary (some Android images): app storage is private.
       return;

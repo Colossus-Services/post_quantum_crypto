@@ -1,7 +1,9 @@
-/// Regression tests for the findings of the PR #1 and PR #3 code reviews.
+/// Regression tests for the findings of the PR #1, PR #3 and PR #9 code
+/// reviews.
 @Tags(['platform'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -388,8 +390,8 @@ void main() {
         await Future.wait([
           for (var i = 0; i < 8; i++) s.write(name, Uint8List.fromList([i])),
         ]);
-        final entries = dir.listSync().map((e) => e.uri.pathSegments.last);
-        expect(entries, [name]);
+        expect(dir.listSync().whereType<File>().map(_baseName), [name]);
+        expect(_staging(dir).listSync(), isEmpty);
         expect(await s.list(), [name]);
         // Writes through one instance are applied in order.
         expect(await s.read(name), [7]);
@@ -411,7 +413,8 @@ void main() {
       final deleted = s.delete(name);
       await Future.wait([...writes, deleted]);
       expect(await s.read(name), isNull);
-      expect(dir.listSync(), isEmpty);
+      expect(dir.listSync().whereType<File>(), isEmpty);
+      expect(_staging(dir).listSync(), isEmpty);
     });
 
     test('an invalid name fails the Future, not the call', () async {
@@ -426,6 +429,36 @@ void main() {
       File('${dir.path}/notes.txt').writeAsStringSync('x');
       File('${dir.path}/${'ab' * 32}.key.0011.tmp').writeAsStringSync('x');
       expect(await FileKeyStorage(dir).list(), isEmpty);
+    });
+
+    // PR #9: a new key file has the umask's permissions until chmod 600, so
+    // it is created in a staging directory others cannot open; the caller's
+    // directory keeps its own permissions.
+    test('files are staged privately; the directory is left alone', () async {
+      final s = FileKeyStorage(dir);
+      final name = '${'01' * 32}.key';
+      if (!Platform.isWindows) {
+        Process.runSync('chmod', ['755', dir.path]);
+      }
+      await s.write(name, Uint8List(1));
+      expect(await s.read(name), [0]);
+      expect(await s.list(), [name]);
+      if (!Platform.isWindows) {
+        expect(dir.statSync().modeString(), 'rwxr-xr-x');
+        expect(_staging(dir).statSync().modeString(), 'rwx------');
+        // Loosened later (by hand, a backup tool, ...): restricted again.
+        Process.runSync('chmod', ['755', _staging(dir).path]);
+        await s.write(name, Uint8List(2));
+        expect(_staging(dir).statSync().modeString(), 'rwx------');
+        expect(File('${dir.path}/$name').statSync().modeString(), 'rw-------');
+      }
+    });
+
+    test('a new store directory is created', () async {
+      final fresh = Directory('${dir.path}${Platform.pathSeparator}a/b');
+      final s = FileKeyStorage(fresh);
+      await s.write('${'02' * 32}.pub', Uint8List(1));
+      expect(await s.list(), ['${'02' * 32}.pub']);
     });
   });
 
@@ -624,4 +657,298 @@ void main() {
       ..setRange(at, at + 8, [0x00, 0x1f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
     expect(() => engine.decodeKey(bad), throwsA(isA<MalformedDataException>()));
   });
+
+  // PR #9: utf8.decode drops a leading BOM, so "a" and "\u{feff}a" decoded
+  // to the same key and the second entry overrode the first.
+  group('a leading U+FEFF is kept', () {
+    test('context entries stay distinct and round-trip', () {
+      final context = {'\u{feff}a': '1', 'a': '2', 'k': '\u{feff}v'};
+      final env = engine.parseEnvelope(
+        engine
+            .encrypt([1], recipients: [kp.publicKey], context: context)
+            .toBytes(),
+      );
+      expect(env.context, context);
+      expect(
+        engine.decrypt(
+          env,
+          privateKey: kp.privateKey,
+          requiredContext: {'\u{feff}a': '1', 'a': '2'},
+        ),
+        [1],
+      );
+      expect(
+        () => engine.decrypt(
+          env,
+          privateKey: kp.privateKey,
+          requiredContext: {'a': '1'},
+        ),
+        throwsA(isA<ContextMismatchException>()),
+      );
+    });
+
+    test('signed metadata and manifest paths stay distinct', () {
+      final sk = engine.generateSigningKeyPair();
+      final metadata = {'\u{feff}role': 'user', 'role': 'admin'};
+      final sig = engine.parseDetachedSignature(
+        engine
+            .signDetached([1], privateKey: sk.privateKey, metadata: metadata)
+            .toBytes(),
+      );
+      expect(
+        engine
+            .verifyDetached([1], signature: sig, publicKey: sk.publicKey)
+            .metadata,
+        metadata,
+      );
+      final manifest = engine.parseSignedManifest(
+        engine.createSignedManifest([
+          engine.manifestEntry('\u{feff}a', [1]),
+          engine.manifestEntry('a', [2]),
+        ], privateKey: sk.privateKey).toBytes(),
+      );
+      expect(manifest.entries.map((e) => e.path), ['a', '\u{feff}a']);
+      engine.verifyManifest(manifest, publicKey: sk.publicKey);
+    });
+
+    test('a value made only of BOMs decodes in linear time', () {
+      // 64 KiB, the default context value limit: 21,845 BOMs.
+      final boms = '\u{feff}' * 21845;
+      final env = engine.parseEnvelope(
+        engine
+            .encrypt([1], recipients: [kp.publicKey], context: {'k': boms})
+            .toBytes(),
+      );
+      expect(env.context['k'], boms);
+    });
+
+    test('a key label round-trips', () {
+      final pub = engine
+          .generateEncryptionKeyPair(
+            metadata: const KeyMetadata(label: '\u{feff}\u{feff}x'),
+          )
+          .publicKey;
+      expect(
+        engine.decodeKey(engine.encodeKey(pub)).metadata.label,
+        '\u{feff}\u{feff}x',
+      );
+    });
+  });
+
+  // PR #9: a raw signature over a domain-prefixed message is also a valid
+  // signed object, so a raw-signing oracle could forge one.
+  group('raw signing and signed objects are separated', () {
+    late SigningKeyPair sk;
+    setUpAll(() => sk = engine.generateSigningKeyPair());
+
+    test('raw sign refuses the signed-object domains', () {
+      for (final domain in [
+        'post_quantum_crypto/v1/detached-signature\u0000',
+        'post_quantum_crypto/v1/manifest\u0000',
+      ]) {
+        for (final message in [domain, '${domain}body']) {
+          expect(
+            () => engine.sign(utf8.encode(message), privateKey: sk.privateKey),
+            throwsA(isA<InvalidInputException>()),
+            reason: message,
+          );
+        }
+      }
+    });
+
+    test('messages that only resemble a domain are signed', () {
+      for (final message in [
+        'post_quantum_crypto/v1/manifest',
+        'post_quantum_crypto/v1/manifesto\u0000',
+        'post_quantum_crypto/v1/detached-signature',
+      ]) {
+        final m = utf8.encode(message);
+        final s = engine.sign(m, privateKey: sk.privateKey);
+        expect(engine.verify(m, signature: s, publicKey: sk.publicKey), isTrue);
+      }
+    });
+
+    test('signed objects still sign and verify', () {
+      final sig = engine.signDetached([1, 2], privateKey: sk.privateKey);
+      engine.verifyDetached([1, 2], signature: sig, publicKey: sk.publicKey);
+    });
+
+    test('a signed object does not verify as a raw signature', () {
+      // The raw-signature message of a detached signature is its domain
+      // prefix followed by its signed body, the record without the
+      // signature field. Build it from a signature over an empty context
+      // through the primitive, which has no guard.
+      final message = utf8.encode(
+        'post_quantum_crypto/v1/detached-signature\u0000body',
+      );
+      final raw = standardCryptoBackend.postQuantum
+          .signature(sk.privateKey.algorithm)
+          .sign(sk.privateKey.secretKey, message, Uint8List(0), Uint8List(32));
+      expect(
+        standardCryptoBackend.postQuantum
+            .signature(sk.privateKey.algorithm)
+            .verify(sk.publicKey.bytes, message, raw, Uint8List(0)),
+        isTrue,
+      );
+      expect(
+        engine.verify(message, signature: raw, publicKey: sk.publicKey),
+        isFalse,
+      );
+    });
+  });
+
+  // PR #9: secret randomness is wiped once it has been used.
+  test('key generation seeds and signing randomness are wiped', () {
+    final spy = _SpyRandom();
+    final e = PostQuantumCryptoEngine.withRandomSourceForTesting(spy);
+    final enc = e.generateEncryptionKeyPair();
+    for (final alg in [
+      SignatureAlgorithm.mlDsa65,
+      SignatureAlgorithm.slhDsaShake128f,
+    ]) {
+      final kp = e.generateSigningKeyPair(algorithm: alg);
+      final sig = e.sign([1], privateKey: kp.privateKey);
+      expect(e.verify([1], signature: sig, publicKey: kp.publicKey), isTrue);
+      e.verifyDetached(
+        [1],
+        signature: e.signDetached([1], privateKey: kp.privateKey),
+        publicKey: kp.publicKey,
+      );
+    }
+    expect(spy.handedOut, hasLength(7)); // 3 key generations + 4 signatures
+    for (final b in spy.handedOut) {
+      expect(b.every((x) => x == 0), isTrue, reason: '${b.length} bytes');
+    }
+    // The keys keep their own copies.
+    final env = e.encrypt([7], recipients: [enc.publicKey]);
+    expect(e.decrypt(env, privateKey: enc.privateKey), [7]);
+  });
+
+  // PR #9: the store's own operations destroy the private keys they load;
+  // the copies they write must stay intact.
+  group('key store operations keep stored keys usable', () {
+    test('revoke and rotate a store holding only the private half', () async {
+      final store = KeyStore(engine, InMemoryKeyStorage());
+      final old = engine.generateSigningKeyPair(
+        algorithm: SignatureAlgorithm.slhDsaShake128f,
+      );
+      await store.put(old.privateKey);
+      await store.rotateSigningKey(old.keyId);
+      await store.revoke(old.keyId, reason: 'test');
+      final loaded =
+          await store.get(old.keyId, private: true) as SigningPrivateKey;
+      expect(loaded.publicKey, old.publicKey);
+      expect(loaded.metadata.usages, {KeyUsage.verify});
+      expect(loaded.metadata.revocationReason, 'test');
+      // The secret bytes survived: the loaded key re-imports and checks.
+      expect(
+        engine
+            .importSigningPrivateKeyExpanded(
+              loaded.secretKey,
+              algorithm: SignatureAlgorithm.slhDsaShake128f,
+            )
+            .publicKey,
+        old.publicKey,
+      );
+    });
+
+    test('restore leaves working keys', () async {
+      final source = KeyStore(engine, InMemoryKeyStorage());
+      final enc = engine.generateEncryptionKeyPair();
+      await source.putPair(enc);
+      final backup = await source.backup('pw', parameters: fastArgon);
+      final target = KeyStore(engine, InMemoryKeyStorage());
+      await target.restore(backup, 'pw');
+      final key =
+          await target.get(enc.keyId, private: true) as EncryptionPrivateKey;
+      final env = engine.encrypt([3], recipients: [enc.publicKey]);
+      expect(engine.decrypt(env, privateKey: key), [3]);
+    });
+
+    test('a backup with a bad record restores nothing', () async {
+      // Two key records, the second one cut short.
+      final first = engine.encodeKey(
+        engine.generateEncryptionKeyPair().privateKey,
+      );
+      final w = BytesBuilder()
+        ..add([0, 0, 0, 2])
+        ..add(_u32(first.length))
+        ..add(first)
+        ..add(_u32(3))
+        ..add([1, 2, 3]);
+      final backup = engine.encryptWithPassword(
+        w.toBytes(),
+        'pw',
+        parameters: fastArgon,
+        context: const {'type': 'post_quantum_crypto/key-backup'},
+      );
+      final target = KeyStore(engine, InMemoryKeyStorage());
+      await expectLater(
+        target.restore(backup, 'pw'),
+        throwsA(isA<MalformedDataException>()),
+      );
+      expect(await target.list(), isEmpty);
+      // Control: the same construction with only the good record restores.
+      final good = BytesBuilder()
+        ..add([0, 0, 0, 1])
+        ..add(_u32(first.length))
+        ..add(first);
+      final ok = engine.encryptWithPassword(
+        good.toBytes(),
+        'pw',
+        parameters: fastArgon,
+        context: const {'type': 'post_quantum_crypto/key-backup'},
+      );
+      expect(await target.restore(ok, 'pw'), hasLength(1));
+    });
+  });
+
+  // PR #9: the opt-out also covers an SLH-DSA record in seed form, the
+  // form SLH-DSA's canonical private key takes when written as a "seed".
+  test('verifySlhDsaKey: false covers seed-form SLH-DSA records', () {
+    const alg = SignatureAlgorithm.slhDsaShake128f;
+    final kp = engine.generateSigningKeyPair(algorithm: alg);
+    final record = Uint8List.fromList(engine.encodeKey(kp.privateKey));
+    final pkAt = _indexOf(record, kp.publicKey.bytes);
+    final formAt = pkAt + kp.publicKey.bytes.length;
+    expect(record[formAt], 2); // expanded
+    record[formAt] = 1; // seed
+    // Corrupt SK.seed: the embedded public key still matches the record's.
+    record[_indexOf(record, kp.privateKey.secretKey)] ^= 1;
+    expect(() => engine.decodeKey(record), throwsA(isA<InvalidKeyException>()));
+    expect(engine.decodeKey(record, verifySlhDsaKey: false).keyId, kp.keyId);
+  });
+}
+
+/// The staging directory of a [FileKeyStorage] in [dir].
+Directory _staging(Directory dir) =>
+    Directory('${dir.path}${Platform.pathSeparator}.pending');
+
+String _baseName(FileSystemEntity e) => e.uri.pathSegments.last;
+
+List<int> _u32(int v) => [v >> 24, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+
+/// Records every buffer it hands out.
+final class _SpyRandom implements SecureRandomSource {
+  final handedOut = <Uint8List>[];
+  final _inner = DeterministicRandom(9);
+
+  @override
+  Uint8List nextBytes(int length) {
+    final b = _inner.nextBytes(length);
+    handedOut.add(b);
+    return b;
+  }
+}
+
+/// Index of the first occurrence of [part] in [data].
+int _indexOf(Uint8List data, List<int> part) {
+  outer:
+  for (var i = 0; i + part.length <= data.length; i++) {
+    for (var j = 0; j < part.length; j++) {
+      if (data[i + j] != part[j]) continue outer;
+    }
+    return i;
+  }
+  throw StateError('not found');
 }

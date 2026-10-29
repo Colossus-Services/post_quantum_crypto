@@ -23,8 +23,12 @@ final class KeyFactory {
   ) {
     _ctx.policy.checkKem(algorithm);
     final seed = _ctx.randomBytes(algorithm.seedLength);
-    final sk = encryptionPrivateKeyFromSeed(algorithm, seed, metadata);
-    return EncryptionKeyPair(sk.publicKey, sk);
+    try {
+      final sk = encryptionPrivateKeyFromSeed(algorithm, seed, metadata);
+      return EncryptionKeyPair(sk.publicKey, sk);
+    } finally {
+      zeroize(seed); // the key holds its own copy
+    }
   }
 
   EncryptionPrivateKey encryptionPrivateKeyFromSeed(
@@ -103,34 +107,40 @@ final class KeyFactory {
     _ctx.policy.checkSignature(algorithm);
     final prim = _ctx.signature(algorithm);
     final seedLength = prim.seedLength;
-    final SigningPrivateKey sk;
-    if (seedLength != null) {
-      sk = signingPrivateKeyFromSeed(
-        algorithm,
-        _ctx.randomBytes(seedLength),
-        metadata,
-      );
-    } else {
-      final randomness = _ctx.randomBytes(prim.keyGenerationRandomnessLength);
-      try {
+    final randomness = _ctx.randomBytes(
+      seedLength ?? prim.keyGenerationRandomnessLength,
+    );
+    try {
+      final SigningPrivateKey sk;
+      if (seedLength != null) {
+        // The key holds its own copy of the seed.
+        sk = signingPrivateKeyFromSeed(algorithm, randomness, metadata);
+      } else {
         final kp = prim.generate(randomness);
         sk = _signingKey(algorithm, null, kp.secretKey, kp.publicKey, metadata);
-      } finally {
-        zeroize(randomness);
       }
+      return SigningKeyPair(sk.publicKey, sk);
+    } finally {
+      zeroize(randomness);
     }
-    return SigningKeyPair(sk.publicKey, sk);
   }
 
   SigningPrivateKey signingPrivateKeyFromSeed(
     SignatureAlgorithm algorithm,
     Uint8List seed,
-    KeyMetadata metadata,
-  ) {
+    KeyMetadata metadata, {
+    bool verifySlhDsaKey = true,
+  }) {
     final prim = _ctx.signature(algorithm);
     if (prim.seedLength == null) {
       // SLH-DSA: the canonical private form is the full secret key.
-      return signingPrivateKeyFromExpanded(algorithm, seed, null, metadata);
+      return signingPrivateKeyFromExpanded(
+        algorithm,
+        seed,
+        null,
+        metadata,
+        verifySlhDsaKey: verifySlhDsaKey,
+      );
     }
     if (seed.length != prim.seedLength) {
       throw InvalidKeyException(

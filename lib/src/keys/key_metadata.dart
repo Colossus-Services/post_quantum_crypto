@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../encoding/bytes.dart';
 import '../encoding/text_encoding.dart';
 import '../errors.dart';
@@ -235,7 +233,7 @@ final class KeyMetadata {
 
   static String _utf8(Bytes b) {
     try {
-      return utf8.decode(b);
+      return utf8String(b);
     } on FormatException {
       throw const MalformedDataException('Invalid UTF-8 in key metadata');
     }
