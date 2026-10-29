@@ -118,10 +118,9 @@ final class PostQuantumCryptoEngine {
     List<int> seed, {
     KemAlgorithm algorithm = KemAlgorithm.mlKem768,
     KeyMetadata metadata = const KeyMetadata(),
-  }) => _keys.encryptionPrivateKeyFromSeed(
-    algorithm,
-    Uint8List.fromList(seed),
-    metadata,
+  }) => _withSecretCopy(
+    seed,
+    (s) => _keys.encryptionPrivateKeyFromSeed(algorithm, s, metadata),
   );
 
   /// Imports an ML-KEM expanded decapsulation key (FIPS 203 `dk`). Keys
@@ -130,10 +129,9 @@ final class PostQuantumCryptoEngine {
     List<int> expanded, {
     KemAlgorithm algorithm = KemAlgorithm.mlKem768,
     KeyMetadata metadata = const KeyMetadata(),
-  }) => _keys.encryptionPrivateKeyFromExpanded(
-    algorithm,
-    Uint8List.fromList(expanded),
-    metadata,
+  }) => _withSecretCopy(
+    expanded,
+    (e) => _keys.encryptionPrivateKeyFromExpanded(algorithm, e, metadata),
   );
 
   /// Imports a raw signing public key.
@@ -149,10 +147,9 @@ final class PostQuantumCryptoEngine {
     List<int> seed, {
     SignatureAlgorithm algorithm = SignatureAlgorithm.mlDsa65,
     KeyMetadata metadata = const KeyMetadata(),
-  }) => _keys.signingPrivateKeyFromSeed(
-    algorithm,
-    Uint8List.fromList(seed),
-    metadata,
+  }) => _withSecretCopy(
+    seed,
+    (s) => _keys.signingPrivateKeyFromSeed(algorithm, s, metadata),
   );
 
   /// Imports an expanded ML-DSA (or SLH-DSA) secret key.
@@ -162,17 +159,33 @@ final class PostQuantumCryptoEngine {
   /// that `t0` and the embedded `tr = H(pk)` match; a key that fails any
   /// check raises [InvalidKeyException]. When [publicKey] is given it must
   /// equal the recomputed one.
+  ///
+  /// For SLH-DSA, `PK.root` is recomputed from `SK.seed` and `PK.seed`
+  /// (FIPS 205) and must match the secret key; an inconsistent key raises
+  /// [InvalidKeyException]. That costs a key generation: milliseconds for
+  /// the "f" parameter sets, 1–2 s for the "s" sets. Raw imports are always
+  /// checked; only key records can skip it (see [decodeKey]).
   SigningPrivateKey importSigningPrivateKeyExpanded(
     List<int> secretKey, {
     List<int>? publicKey,
     SignatureAlgorithm algorithm = SignatureAlgorithm.mlDsa65,
     KeyMetadata metadata = const KeyMetadata(),
-  }) => _keys.signingPrivateKeyFromExpanded(
-    algorithm,
-    Uint8List.fromList(secretKey),
-    publicKey,
-    metadata,
+  }) => _withSecretCopy(
+    secretKey,
+    (sk) =>
+        _keys.signingPrivateKeyFromExpanded(algorithm, sk, publicKey, metadata),
   );
+
+  /// Runs [import] on a [Uint8List] copy of the caller's secret [bytes] and
+  /// wipes the copy afterwards; the imported key keeps its own copy.
+  static T _withSecretCopy<T>(List<int> bytes, T Function(Uint8List) import) {
+    final copy = Uint8List.fromList(bytes);
+    try {
+      return import(copy);
+    } finally {
+      zeroize(copy);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Envelope encryption
@@ -520,7 +533,12 @@ final class PostQuantumCryptoEngine {
     required String newPassword,
     Argon2idParameters? parameters,
   }) {
-    final key = importPrivateKeyWithPassword(bytes, oldPassword);
+    // The key is only re-wrapped, not used, so the SLH-DSA check is skipped.
+    final key = importPrivateKeyWithPassword(
+      bytes,
+      oldPassword,
+      verifySlhDsaKey: false,
+    );
     try {
       return exportPrivateKeyWithPassword(
         key,
@@ -573,6 +591,13 @@ final class PostQuantumCryptoEngine {
   /// Signs [message] with FIPS 204 / FIPS 205 pure signing (hedged) and the
   /// optional [context] string (≤ 255 bytes). The output is a standard
   /// signature verifiable by any conforming implementation.
+  ///
+  /// A [message] that starts with the domain prefix of a signed object
+  /// (`post_quantum_crypto/v1/detached-signature\0` or
+  /// `post_quantum_crypto/v1/manifest\0`) is refused with
+  /// [InvalidInputException]. Its raw signature would also be a valid
+  /// detached signature or manifest, so a service that raw-signs messages
+  /// chosen by others could otherwise be made to sign content it never saw.
   Uint8List sign(
     List<int> message, {
     required SigningPrivateKey privateKey,
@@ -581,14 +606,24 @@ final class PostQuantumCryptoEngine {
     ctx.policy.checkSignature(privateKey.algorithm);
     ctx.policy.checkKeyMetadata(privateKey.metadata, KeyUsage.sign);
     final ctxBytes = checkSignatureContext(context);
+    if (isSignedObjectMessage(message)) {
+      throw const InvalidInputException(
+        'Message is reserved for signed objects; use signDetached or '
+        'createSignedManifest',
+      );
+    }
     final prim = ctx.signature(privateKey.algorithm);
     final rnd = ctx.randomBytes(prim.randomnessLength);
-    return prim.sign(
-      privateKey.secretKey,
-      message is Uint8List ? message : Uint8List.fromList(message),
-      ctxBytes,
-      rnd,
-    );
+    try {
+      return prim.sign(
+        privateKey.secretKey,
+        message is Uint8List ? message : Uint8List.fromList(message),
+        ctxBytes,
+        rnd,
+      );
+    } finally {
+      zeroize(rnd);
+    }
   }
 
   /// Verifies a raw signature. Returns `false` for any invalid or malformed

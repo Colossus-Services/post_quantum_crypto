@@ -151,11 +151,17 @@ final class KeyStore {
   Future<QuantumKey> _requirePublic(KeyId id) async {
     final pub = await get(id);
     if (pub != null) return pub;
-    return switch (await get(id, private: true)) {
-      EncryptionPrivateKey k => k.publicKey,
-      SigningPrivateKey k => k.publicKey,
-      _ => throw const KeyNotFoundException('Key not in store'),
-    };
+    // Only the public half is used; the stored public key is still compared.
+    final key = await get(id, private: true, verifySlhDsaKey: false);
+    try {
+      return switch (key) {
+        EncryptionPrivateKey k => k.publicKey,
+        SigningPrivateKey k => k.publicKey,
+        _ => throw const KeyNotFoundException('Key not in store'),
+      };
+    } finally {
+      if (key != null) _destroy(key);
+    }
   }
 
   static final _namePattern = RegExp(r'^([0-9a-f]{64})\.(key|pub)$');
@@ -182,8 +188,15 @@ final class KeyStore {
     KeyMetadata Function(KeyMetadata) update,
   ) async {
     for (final private in [false, true]) {
-      final k = await get(id, private: private);
-      if (k != null) await put(_withMetadata(k, update(k.metadata)));
+      // The key is only rewritten, not used: get() checks it when it is
+      // loaded for use.
+      final k = await get(id, private: private, verifySlhDsaKey: false);
+      if (k == null) continue;
+      try {
+        await put(_withMetadata(k, update(k.metadata)));
+      } finally {
+        _destroy(k); // the copy shares k's secret buffers
+      }
     }
   }
 
@@ -321,14 +334,19 @@ final class KeyStore {
 
   /// Decodes one storage entry by its content, not its name: a
   /// password-protected key with the store password, anything else as a
-  /// plain key record.
+  /// plain key record. Keys are only copied into the backup, so the SLH-DSA
+  /// check is left to get() after a restore.
   QuantumKey _decodeEntry(Uint8List data) {
     final password = _password;
     final isProtected =
         data.length > 5 && data[5] == ObjectType.passwordProtectedKey;
     return password != null && isProtected
-        ? engine.importPrivateKeyWithPassword(data, password)
-        : engine.decodeKey(data);
+        ? engine.importPrivateKeyWithPassword(
+            data,
+            password,
+            verifySlhDsaKey: false,
+          )
+        : engine.decodeKey(data, verifySlhDsaKey: false);
   }
 
   static void _destroy(QuantumKey key) {
@@ -349,15 +367,25 @@ final class KeyStore {
         final n = r.u32();
         final out = <QuantumKey>[];
         for (var i = 0; i < n; i++) {
-          out.add(engine.decodeKey(r.bytes32(max: 1024 * 1024)));
+          // Checked by get() when loaded for use (see _decodeEntry).
+          out.add(
+            engine.decodeKey(
+              r.bytes32(max: 1024 * 1024),
+              verifySlhDsaKey: false,
+            ),
+          );
         }
         r.expectEnd();
         return out;
       });
-      for (final k in keys) {
-        await put(k);
+      try {
+        for (final k in keys) {
+          await put(k);
+        }
+        return {for (final k in keys) k.keyId}.toList();
+      } finally {
+        keys.forEach(_destroy);
       }
-      return {for (final k in keys) k.keyId}.toList();
     } finally {
       zeroize(plain);
     }

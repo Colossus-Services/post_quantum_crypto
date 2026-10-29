@@ -1,3 +1,54 @@
+## 2.2.1
+
+### Security
+
+- **A leading U+FEFF no longer collapses map entries.** Dart's
+  `utf8.decode` drops a leading byte-order mark (`EF BB BF`), so the
+  canonical-map keys `a` and `U+FEFF a` both decoded to `a`. The second
+  entry silently overrode the first:
+  - in an authenticated context, `{..., 'tenant': 'A', 'U+FEFF tenant': 'B'}`
+    parsed as `tenant: B` and passed `requiredContext: {'tenant': 'B'}`;
+  - signed metadata was affected the same way;
+  - two manifest paths could read as the same path.
+
+  Canonical maps, manifest paths and key metadata now decode losslessly
+  (`utf8String`, the inverse of `utf8Bytes`).
+- **Raw `sign` refuses signed-object messages.** A detached signature or
+  manifest is a signature over `post_quantum_crypto/v1/<kind>\0 || body`
+  under the caller's FIPS context. A raw signature over a message with that
+  prefix was therefore also a valid signed object. A service that
+  raw-signed messages chosen by others with its release key could be made
+  to sign content it never saw. Raw `sign` now throws
+  `InvalidInputException` for such messages.
+- **`FileKeyStorage` restricts its directory** to its owner (`chmod 700`)
+  before each write. Before, a new temporary key file existed with the
+  umask's permissions (typically 0644) until it was restricted. Another
+  local user who opened it in that window kept read access to the key bytes
+  written afterwards.
+
+### Fixed
+
+- Private-key copies are wiped:
+  - `KeyStore` revocation, rotation and restore destroy the private keys
+    they load;
+  - key generation wipes its seed;
+  - raw private-key imports wipe their temporary copy of the caller's bytes;
+  - signing wipes its hedging randomness.
+- The `KeyStore`'s own operations no longer pay the SLH-DSA key check (1–2 s
+  per "s" key) for keys they only carry over. This covers revocation,
+  rotation, backup and restore, and `changeKeyPassword` does the same. A key
+  is still checked when it is loaded for use with `get`.
+- `verifySlhDsaKey: false` is also honoured for an SLH-DSA key record in
+  seed form.
+- `importSigningPrivateKeyExpanded` documents the SLH-DSA check and its
+  cost.
+
+### Documentation
+
+- `test/README.md` describes each test directory, the tags and the NIST
+  ACVP vectors: which files, parameter sets and subsets, and what each test
+  checks.
+
 ## 2.2.0
 
 ### Fixed

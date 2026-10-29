@@ -70,6 +70,23 @@ Bytes utf8Bytes(String s) {
   return Uint8List.fromList(utf8.encode(s));
 }
 
+/// UTF-8 decodes [bytes]: the inverse of [utf8Bytes].
+///
+/// Unlike `utf8.decode`, a leading byte-order mark (`EF BB BF`) is kept as
+/// U+FEFF, not dropped. Dropping it would decode distinct byte strings to
+/// the same string, so a canonical map could carry two entries under one
+/// key, the second overriding the first. Throws [FormatException] for
+/// malformed UTF-8.
+String utf8String(List<int> bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xef &&
+      bytes[1] == 0xbb &&
+      bytes[2] == 0xbf) {
+    return '\u{feff}${utf8String(bytes.sublist(3))}';
+  }
+  return utf8.decode(bytes);
+}
+
 /// Writes the canonical big-endian binary encodings used by every format in
 /// this package.
 final class ByteWriter {

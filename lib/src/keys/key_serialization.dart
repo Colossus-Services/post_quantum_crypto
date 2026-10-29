@@ -227,6 +227,7 @@ final class KeyCodec {
           alg,
           material!,
           metadata,
+          verifySlhDsaKey: verifySlhDsaKey,
         );
         if (!constantTimeEquals(key.publicKey.bytes, pk)) {
           key.destroy();

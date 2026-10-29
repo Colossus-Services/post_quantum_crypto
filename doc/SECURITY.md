@@ -79,6 +79,14 @@
   large allocations, and Argon2id parameters are bounded before use.
 - Deterministic randomness exists only under `test/` and is injected through
   a `@visibleForTesting` constructor.
+- Signed objects sign a domain-prefixed encoding
+  (`post_quantum_crypto/v1/detached-signature\0`,
+  `post_quantum_crypto/v1/manifest\0`). Raw `sign` refuses messages that
+  start with those prefixes, so a key that also raw-signs messages chosen by
+  others cannot be made to produce a detached signature or manifest.
+- Canonical maps, manifest paths and key metadata decode UTF-8 losslessly: a
+  leading U+FEFF is kept, so distinct encodings never decode to the same
+  string (and a map can never carry two entries under one key).
 
 ## X-Wing / hybrid assumptions
 
@@ -99,8 +107,8 @@ both sides agree on the labels they supplied.
   overwrite buffers, but the garbage collector, isolates (`runInBackground`
   copies data), JavaScript engines and the OS may keep other copies. Strings
   (passwords) cannot be zeroized at all.
-- **Storage.** `FileKeyStorage` is ordinary file storage with `chmod 600`;
-  it is not hardware-backed. Implement `KeyStorage` over a platform keystore
+- **Storage.** `FileKeyStorage` is ordinary file storage in an owner-only
+  directory (`chmod 700`, files `chmod 600`); it is not hardware-backed. Implement `KeyStorage` over a platform keystore
   for stronger protection.
 - **Revocation.** Removing a recipient (rewrap) or revoking a key does not
   revoke access to data or keys an attacker already copied.

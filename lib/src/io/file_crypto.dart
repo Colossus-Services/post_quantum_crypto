@@ -155,8 +155,11 @@ extension PostQuantumCryptoFiles on PostQuantumCryptoEngine {
 
 /// [KeyStorage] in a directory, one file per key.
 ///
-/// Files are restricted to owner-only permissions on POSIX systems
-/// (`chmod 600`, applied before any key bytes are written). Temporary
+/// On POSIX systems the directory is restricted to its owner (`chmod 700`)
+/// before each write, and files too (`chmod 600`, before any key bytes are
+/// written). A new file gets the umask's permissions until it is
+/// restricted, and a handle opened in that window would keep its access;
+/// the private directory keeps other users from opening it at all. Temporary
 /// files are named `<key>.<random>.tmp` and are not listed as keys. Writes
 /// through one instance are serialized per key; concurrent writers in
 /// different processes are not coordinated (on Windows the losing rename
@@ -211,6 +214,8 @@ final class FileKeyStorage implements KeyStorage {
 
   Future<void> _write(String name, Uint8List data) async {
     await directory.create(recursive: true);
+    // Before any file is created in it (see the class comment).
+    await _restrictPermissions(directory.path, '700');
     final f = _file(name);
     // A unique temporary name: concurrent writes of the same key cannot
     // clobber each other's partial file.
@@ -219,7 +224,7 @@ final class FileKeyStorage implements KeyStorage {
     try {
       // Restrict permissions before any key bytes are written.
       await tmp.writeAsBytes(const [], flush: true);
-      await _restrictPermissions(tmp);
+      await _restrictPermissions(tmp.path, '600');
       await tmp.writeAsBytes(data, flush: true);
       await tmp.rename(f.path);
     } catch (_) {
@@ -228,14 +233,14 @@ final class FileKeyStorage implements KeyStorage {
     }
   }
 
-  /// `chmod 600` on POSIX systems. Fails closed if chmod runs and reports an
-  /// error. Skipped where there is no chmod (Windows; the iOS sandbox, where
-  /// `Process` is unavailable and app containers are already private).
-  static Future<void> _restrictPermissions(File file) async {
+  /// `chmod <mode>` on POSIX systems. Fails closed if chmod runs and reports
+  /// an error. Skipped where there is no chmod (Windows; the iOS sandbox,
+  /// where `Process` is unavailable and app containers are already private).
+  static Future<void> _restrictPermissions(String path, String mode) async {
     if (Platform.isWindows || Platform.isIOS) return;
     final ProcessResult r;
     try {
-      r = await Process.run('chmod', ['600', file.path]);
+      r = await Process.run('chmod', [mode, path]);
     } on ProcessException {
       // No chmod binary (some Android images): app storage is private.
       return;
