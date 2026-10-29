@@ -43,6 +43,21 @@
 - `importSigningPrivateKeyExpanded` documents the SLH-DSA check and its
   cost.
 
+### Tests
+
+- Regression tests for each fix (`test/unit/review_regressions_test.dart`):
+  - U+FEFF-prefixed context keys, signed metadata, manifest paths and key
+    labels;
+  - raw signing of signed-object domains, and near misses that still sign;
+  - wiping of key-generation seeds and signing randomness, through a spying
+    random source;
+  - key-store revoke, rotate and restore leaving usable keys;
+  - the opt-out for seed-form SLH-DSA records;
+  - the private `FileKeyStorage` directory, checked on POSIX and run on
+    Linux, macOS and Windows.
+
+  Seven of them fail without the fixes.
+
 ### Documentation
 
 - `test/README.md` describes each test directory, the tags and the NIST
