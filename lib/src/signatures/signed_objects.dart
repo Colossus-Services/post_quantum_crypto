@@ -432,7 +432,14 @@ final class SignedObjectService {
 
   SignedObjectService(this._ctx);
 
-  Uint8List _sign(SigningPrivateKey key, Uint8List message, Uint8List context) {
+  /// Hedged FIPS 204/205 signing of [message] under [context], after the
+  /// policy checks; the one signing path of the engine (raw and signed
+  /// objects).
+  Uint8List signMessage(
+    SigningPrivateKey key,
+    Uint8List message,
+    Uint8List context,
+  ) {
     _ctx.policy.checkSignature(key.algorithm);
     _ctx.policy.checkKeyMetadata(key.metadata, KeyUsage.sign);
     final prim = _ctx.signature(key.algorithm);
@@ -485,7 +492,11 @@ final class SignedObjectService {
       digest,
       length,
     );
-    final sig = _sign(key, concatBytes([_detachedDomain, body]), ctxBytes);
+    final sig = signMessage(
+      key,
+      concatBytes([_detachedDomain, body]),
+      ctxBytes,
+    );
     final w = ByteWriter()
       ..raw(body)
       ..bytes32(sig);
@@ -596,7 +607,11 @@ final class SignedObjectService {
       metadata,
       entries,
     );
-    final sig = _sign(key, concatBytes([_manifestDomain, body]), ctxBytes);
+    final sig = signMessage(
+      key,
+      concatBytes([_manifestDomain, body]),
+      ctxBytes,
+    );
     final w = ByteWriter()
       ..raw(body)
       ..bytes32(sig);

@@ -612,24 +612,22 @@ final class PostQuantumCryptoEngine {
         'createSignedManifest',
       );
     }
-    final prim = ctx.signature(privateKey.algorithm);
-    final rnd = ctx.randomBytes(prim.randomnessLength);
-    try {
-      return prim.sign(
-        privateKey.secretKey,
-        message is Uint8List ? message : Uint8List.fromList(message),
-        ctxBytes,
-        rnd,
-      );
-    } finally {
-      zeroize(rnd);
-    }
+    return _signed.signMessage(
+      privateKey,
+      message is Uint8List ? message : Uint8List.fromList(message),
+      ctxBytes,
+    );
   }
 
   /// Verifies a raw signature. Returns `false` for any invalid or malformed
   /// signature. A valid signature proves only that the holder of the
   /// matching private key signed [message]; whether that key is trusted is a
   /// separate decision.
+  ///
+  /// Like [sign], it refuses a signed-object message: it returns `false` for
+  /// a [message] that starts with a signed-object domain prefix. Otherwise
+  /// any published detached signature or manifest would verify as a raw
+  /// signature over its domain-prefixed body.
   bool verify(
     List<int> message, {
     required List<int> signature,
@@ -639,6 +637,7 @@ final class PostQuantumCryptoEngine {
     ctx.policy.checkSignature(publicKey.algorithm);
     ctx.policy.checkKeyMetadata(publicKey.metadata, KeyUsage.verify);
     final ctxBytes = checkSignatureContext(context);
+    if (isSignedObjectMessage(message)) return false;
     return ctx
         .signature(publicKey.algorithm)
         .verify(

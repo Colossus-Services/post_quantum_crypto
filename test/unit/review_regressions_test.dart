@@ -390,8 +390,8 @@ void main() {
         await Future.wait([
           for (var i = 0; i < 8; i++) s.write(name, Uint8List.fromList([i])),
         ]);
-        final entries = dir.listSync().map((e) => e.uri.pathSegments.last);
-        expect(entries, [name]);
+        expect(dir.listSync().whereType<File>().map(_baseName), [name]);
+        expect(_staging(dir).listSync(), isEmpty);
         expect(await s.list(), [name]);
         // Writes through one instance are applied in order.
         expect(await s.read(name), [7]);
@@ -413,7 +413,8 @@ void main() {
       final deleted = s.delete(name);
       await Future.wait([...writes, deleted]);
       expect(await s.read(name), isNull);
-      expect(dir.listSync(), isEmpty);
+      expect(dir.listSync().whereType<File>(), isEmpty);
+      expect(_staging(dir).listSync(), isEmpty);
     });
 
     test('an invalid name fails the Future, not the call', () async {
@@ -431,20 +432,33 @@ void main() {
     });
 
     // PR #9: a new key file has the umask's permissions until chmod 600, so
-    // the directory must keep other users from opening it in that window.
-    test('the directory is private, whether new or existing', () async {
-      final fresh = Directory('${dir.path}${Platform.pathSeparator}store');
-      await FileKeyStorage(fresh).write('${'01' * 32}.key', Uint8List(1));
+    // it is created in a staging directory others cannot open; the caller's
+    // directory keeps its own permissions.
+    test('files are staged privately; the directory is left alone', () async {
+      final s = FileKeyStorage(dir);
+      final name = '${'01' * 32}.key';
       if (!Platform.isWindows) {
         Process.runSync('chmod', ['755', dir.path]);
       }
-      await FileKeyStorage(dir).write('${'02' * 32}.key', Uint8List(1));
-      expect(await FileKeyStorage(fresh).read('${'01' * 32}.key'), [0]);
-      expect(await FileKeyStorage(dir).read('${'02' * 32}.key'), [0]);
+      await s.write(name, Uint8List(1));
+      expect(await s.read(name), [0]);
+      expect(await s.list(), [name]);
       if (!Platform.isWindows) {
-        expect(fresh.statSync().modeString(), 'rwx------');
-        expect(dir.statSync().modeString(), 'rwx------');
+        expect(dir.statSync().modeString(), 'rwxr-xr-x');
+        expect(_staging(dir).statSync().modeString(), 'rwx------');
+        // Loosened later (by hand, a backup tool, ...): restricted again.
+        Process.runSync('chmod', ['755', _staging(dir).path]);
+        await s.write(name, Uint8List(2));
+        expect(_staging(dir).statSync().modeString(), 'rwx------');
+        expect(File('${dir.path}/$name').statSync().modeString(), 'rw-------');
       }
+    });
+
+    test('a new store directory is created', () async {
+      final fresh = Directory('${dir.path}${Platform.pathSeparator}a/b');
+      final s = FileKeyStorage(fresh);
+      await s.write('${'02' * 32}.pub', Uint8List(1));
+      expect(await s.list(), ['${'02' * 32}.pub']);
     });
   });
 
@@ -697,6 +711,17 @@ void main() {
       engine.verifyManifest(manifest, publicKey: sk.publicKey);
     });
 
+    test('a value made only of BOMs decodes in linear time', () {
+      // 64 KiB, the default context value limit: 21,845 BOMs.
+      final boms = '\u{feff}' * 21845;
+      final env = engine.parseEnvelope(
+        engine
+            .encrypt([1], recipients: [kp.publicKey], context: {'k': boms})
+            .toBytes(),
+      );
+      expect(env.context['k'], boms);
+    });
+
     test('a key label round-trips', () {
       final pub = engine
           .generateEncryptionKeyPair(
@@ -746,6 +771,29 @@ void main() {
     test('signed objects still sign and verify', () {
       final sig = engine.signDetached([1, 2], privateKey: sk.privateKey);
       engine.verifyDetached([1, 2], signature: sig, publicKey: sk.publicKey);
+    });
+
+    test('a signed object does not verify as a raw signature', () {
+      // The raw-signature message of a detached signature is its domain
+      // prefix followed by its signed body, the record without the
+      // signature field. Build it from a signature over an empty context
+      // through the primitive, which has no guard.
+      final message = utf8.encode(
+        'post_quantum_crypto/v1/detached-signature\u0000body',
+      );
+      final raw = standardCryptoBackend.postQuantum
+          .signature(sk.privateKey.algorithm)
+          .sign(sk.privateKey.secretKey, message, Uint8List(0), Uint8List(32));
+      expect(
+        standardCryptoBackend.postQuantum
+            .signature(sk.privateKey.algorithm)
+            .verify(sk.publicKey.bytes, message, raw, Uint8List(0)),
+        isTrue,
+      );
+      expect(
+        engine.verify(message, signature: raw, publicKey: sk.publicKey),
+        isFalse,
+      );
     });
   });
 
@@ -816,6 +864,43 @@ void main() {
       final env = engine.encrypt([3], recipients: [enc.publicKey]);
       expect(engine.decrypt(env, privateKey: key), [3]);
     });
+
+    test('a backup with a bad record restores nothing', () async {
+      // Two key records, the second one cut short.
+      final first = engine.encodeKey(
+        engine.generateEncryptionKeyPair().privateKey,
+      );
+      final w = BytesBuilder()
+        ..add([0, 0, 0, 2])
+        ..add(_u32(first.length))
+        ..add(first)
+        ..add(_u32(3))
+        ..add([1, 2, 3]);
+      final backup = engine.encryptWithPassword(
+        w.toBytes(),
+        'pw',
+        parameters: fastArgon,
+        context: const {'type': 'post_quantum_crypto/key-backup'},
+      );
+      final target = KeyStore(engine, InMemoryKeyStorage());
+      await expectLater(
+        target.restore(backup, 'pw'),
+        throwsA(isA<MalformedDataException>()),
+      );
+      expect(await target.list(), isEmpty);
+      // Control: the same construction with only the good record restores.
+      final good = BytesBuilder()
+        ..add([0, 0, 0, 1])
+        ..add(_u32(first.length))
+        ..add(first);
+      final ok = engine.encryptWithPassword(
+        good.toBytes(),
+        'pw',
+        parameters: fastArgon,
+        context: const {'type': 'post_quantum_crypto/key-backup'},
+      );
+      expect(await target.restore(ok, 'pw'), hasLength(1));
+    });
   });
 
   // PR #9: the opt-out also covers an SLH-DSA record in seed form, the
@@ -834,6 +919,14 @@ void main() {
     expect(engine.decodeKey(record, verifySlhDsaKey: false).keyId, kp.keyId);
   });
 }
+
+/// The staging directory of a [FileKeyStorage] in [dir].
+Directory _staging(Directory dir) =>
+    Directory('${dir.path}${Platform.pathSeparator}.pending');
+
+String _baseName(FileSystemEntity e) => e.uri.pathSegments.last;
+
+List<int> _u32(int v) => [v >> 24, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
 
 /// Records every buffer it hands out.
 final class _SpyRandom implements SecureRandomSource {

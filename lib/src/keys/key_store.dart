@@ -366,16 +366,22 @@ final class KeyStore {
         final r = ByteReader(plain);
         final n = r.u32();
         final out = <QuantumKey>[];
-        for (var i = 0; i < n; i++) {
-          // Checked by get() when loaded for use (see _decodeEntry).
-          out.add(
-            engine.decodeKey(
-              r.bytes32(max: 1024 * 1024),
-              verifySlhDsaKey: false,
-            ),
-          );
+        try {
+          for (var i = 0; i < n; i++) {
+            // Checked by get() when loaded for use (see _decodeEntry).
+            out.add(
+              engine.decodeKey(
+                r.bytes32(max: 1024 * 1024),
+                verifySlhDsaKey: false,
+              ),
+            );
+          }
+          r.expectEnd();
+        } catch (_) {
+          // A later record failed: nothing is restored, so wipe the rest.
+          out.forEach(_destroy);
+          rethrow;
         }
-        r.expectEnd();
         return out;
       });
       try {

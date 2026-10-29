@@ -12,25 +12,36 @@
   - two manifest paths could read as the same path.
 
   Canonical maps, manifest paths and key metadata now decode losslessly
-  (`utf8String`, the inverse of `utf8Bytes`).
-- **Raw `sign` refuses signed-object messages.** A detached signature or
-  manifest is a signature over `post_quantum_crypto/v1/<kind>\0 || body`
-  under the caller's FIPS context. A raw signature over a message with that
-  prefix was therefore also a valid signed object. A service that
-  raw-signed messages chosen by others with its release key could be made
-  to sign content it never saw. Raw `sign` now throws
-  `InvalidInputException` for such messages.
-- **`FileKeyStorage` restricts its directory** to its owner (`chmod 700`)
-  before each write. Before, a new temporary key file existed with the
-  umask's permissions (typically 0644) until it was restricted. Another
-  local user who opened it in that window kept read access to the key bytes
-  written afterwards.
+  (`utf8String`, the inverse of `utf8Bytes`), in linear time however many
+  BOMs a value holds.
+- **Raw signatures and signed objects are separated.** A detached
+  signature or manifest is a signature over
+  `post_quantum_crypto/v1/<kind>\0 || body` under the caller's FIPS
+  context. A raw signature over a message with that prefix was therefore
+  also a valid signed object. A service that raw-signed messages chosen by
+  others with its release key could be made to sign content it never saw.
+  - Raw `sign` now throws `InvalidInputException` for such messages.
+  - Raw `verify` now returns `false` for them, so a published signed object
+    no longer verifies as a raw signature.
+  - SECURITY.md notes that the guard does not cover the same key raw-signing
+    in other implementations.
+- **`FileKeyStorage` stages key files privately.** Before, a new temporary
+  key file existed with the umask's permissions (typically 0644) until it
+  was restricted. Another local user who opened it in that window kept read
+  access to the key bytes written afterwards.
+  - Key files are now written in an owner-only staging directory,
+    `.pending` (`chmod 700`, its mode checked on every write), and renamed
+    into place.
+  - The permissions of the storage directory itself are left as the caller
+    set them.
+  - `chmod` is given absolute paths, so a relative directory starting with
+    `-` is not read as an option.
 
 ### Fixed
 
 - Private-key copies are wiped:
   - `KeyStore` revocation, rotation and restore destroy the private keys
-    they load;
+    they load, including on a restore that fails partway;
   - key generation wipes its seed;
   - raw private-key imports wipe their temporary copy of the caller's bytes;
   - signing wipes its hedging randomness.
@@ -42,19 +53,22 @@
   seed form.
 - `importSigningPrivateKeyExpanded` documents the SLH-DSA check and its
   cost.
+- Raw and signed-object signing share one implementation.
 
 ### Tests
 
 - Regression tests for each fix (`test/unit/review_regressions_test.dart`):
   - U+FEFF-prefixed context keys, signed metadata, manifest paths and key
-    labels;
-  - raw signing of signed-object domains, and near misses that still sign;
+    labels, and a 64 KiB value made only of BOMs;
+  - raw signing and verification of signed-object domains, and near misses
+    that still sign;
   - wiping of key-generation seeds and signing randomness, through a spying
     random source;
-  - key-store revoke, rotate and restore leaving usable keys;
+  - key-store revoke, rotate and restore leaving usable keys, and a backup
+    with a bad record restoring nothing;
   - the opt-out for seed-form SLH-DSA records;
-  - the private `FileKeyStorage` directory, checked on POSIX and run on
-    Linux, macOS and Windows.
+  - `FileKeyStorage` staging, checked on POSIX and run on Linux, macOS and
+    Windows.
 
   Seven of them fail without the fixes.
 

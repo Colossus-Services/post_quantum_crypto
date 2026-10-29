@@ -78,13 +78,17 @@ Bytes utf8Bytes(String s) {
 /// key, the second overriding the first. Throws [FormatException] for
 /// malformed UTF-8.
 String utf8String(List<int> bytes) {
-  if (bytes.length >= 3 &&
-      bytes[0] == 0xef &&
-      bytes[1] == 0xbb &&
-      bytes[2] == 0xbf) {
-    return '\u{feff}${utf8String(bytes.sublist(3))}';
+  // utf8.decode drops only the first BOM; count them all, without recursion
+  // (a value can hold tens of thousands).
+  var boms = 0;
+  while (bytes.length >= 3 * boms + 3 &&
+      bytes[3 * boms] == 0xef &&
+      bytes[3 * boms + 1] == 0xbb &&
+      bytes[3 * boms + 2] == 0xbf) {
+    boms++;
   }
-  return utf8.decode(bytes);
+  if (boms == 0) return utf8.decode(bytes);
+  return '\u{feff}' * boms + utf8.decode(bytes.sublist(3 * boms));
 }
 
 /// Writes the canonical big-endian binary encodings used by every format in
