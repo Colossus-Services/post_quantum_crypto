@@ -111,8 +111,13 @@ final class KeyFactory {
         metadata,
       );
     } else {
-      final kp = prim.generate();
-      sk = _signingKey(algorithm, null, kp.secretKey, kp.publicKey, metadata);
+      final randomness = _ctx.randomBytes(prim.keyGenerationRandomnessLength);
+      try {
+        final kp = prim.generate(randomness);
+        sk = _signingKey(algorithm, null, kp.secretKey, kp.publicKey, metadata);
+      } finally {
+        zeroize(randomness);
+      }
     }
     return SigningKeyPair(sk.publicKey, sk);
   }
@@ -146,21 +151,28 @@ final class KeyFactory {
   /// Imports an expanded signing secret key. For ML-DSA the public key is
   /// recomputed from the secret key (which also checks s1, s2 and t0, see
   /// ml_dsa_expanded.dart) and must match `tr = H(pk)` and [publicKey] when
-  /// given; for SLH-DSA it is read from the secret key itself.
+  /// given. For SLH-DSA, `PK.root` is recomputed from `SK.seed` and
+  /// `PK.seed` (`SignaturePrimitive.publicKeyFromSecretKey`) and must match
+  /// the secret key and [publicKey] when given. With [verifySlhDsaKey] false
+  /// that recomputation (a key generation) is skipped and the public key is
+  /// taken from the secret key as stored.
   SigningPrivateKey signingPrivateKeyFromExpanded(
     SignatureAlgorithm algorithm,
     Uint8List secretKey,
     List<int>? publicKey,
-    KeyMetadata metadata,
-  ) {
+    KeyMetadata metadata, {
+    bool verifySlhDsaKey = true,
+  }) {
     final prim = _ctx.signature(algorithm);
     if (secretKey.length != prim.secretKeyLength) {
       throw const InvalidKeyException('Signing secret key has wrong length');
     }
     final Uint8List pk;
     if (algorithm.isSlhDsa) {
-      final n = algorithm.publicKeyLength ~/ 2;
-      pk = Uint8List.fromList(secretKey.sublist(2 * n, 4 * n));
+      // sk = SK.seed || SK.prf || PK.seed || PK.root; pk = PK.seed || PK.root.
+      pk = verifySlhDsaKey
+          ? prim.publicKeyFromSecretKey(secretKey)
+          : secretKey.sublist(secretKey.length - prim.publicKeyLength);
       if (publicKey != null && !constantTimeEquals(pk, publicKey)) {
         throw const InvalidKeyException('Public key does not match');
       }

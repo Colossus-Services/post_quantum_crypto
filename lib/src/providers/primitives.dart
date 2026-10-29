@@ -115,16 +115,28 @@ abstract interface class SignaturePrimitive {
 
   int get signatureLength;
 
-  /// Length of the seed accepted by [generateFromSeed], or `null` when the
-  /// underlying implementation offers no seeded key generation.
+  /// Length of the seed accepted by [generateFromSeed], which is the
+  /// canonical private form (ML-DSA's `ξ`), or `null` when the full secret
+  /// key is the private form (SLH-DSA).
   int? get seedLength;
 
   /// Deterministic key generation from [seed].
   RawKeyPair generateFromSeed(Uint8List seed);
 
-  /// Key generation using the implementation's own CSPRNG. Only used when
-  /// [seedLength] is null.
-  RawKeyPair generate();
+  /// Length of the randomness [generate] expects.
+  int get keyGenerationRandomnessLength;
+
+  /// Key generation from package-supplied [randomness] that is not kept as
+  /// a seed (SLH-DSA: `SK.seed || SK.prf || PK.seed`, FIPS 205 Algorithm
+  /// 18). Only used when [seedLength] is null.
+  RawKeyPair generate(Uint8List randomness);
+
+  /// Returns the public key of the expanded secret key [secretKey] after
+  /// checking that the secret key is consistent with it (SLH-DSA: `PK.root`
+  /// is recomputed from `SK.seed` and `PK.seed`, FIPS 205 Algorithm 18).
+  /// Throws `InvalidKeyException`. Only used for SLH-DSA; the package checks
+  /// ML-DSA keys itself (ml_dsa_expanded.dart).
+  Uint8List publicKeyFromSecretKey(Uint8List secretKey);
 
   /// Pure (non-pre-hashed) signing with FIPS 204/205 context [context]
   /// (≤ 255 bytes) and the hedging randomness [randomness].

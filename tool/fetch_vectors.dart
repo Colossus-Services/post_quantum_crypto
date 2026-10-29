@@ -64,6 +64,13 @@ Future<void> main() async {
   // sigGen is limited to the hedged "f" sets ("s" signing is very slow in
   // pure Dart).
   await _acvpFile(
+    'SLH-DSA-keyGen-FIPS205',
+    'acvp_slhdsa_keygen.json',
+    // Each "s" key generation takes 1-2 s in pure Dart.
+    perGroup: 1,
+    groupFilter: (g) => '${g['parameterSet']}'.contains('SHAKE'),
+  );
+  await _acvpFile(
     'SLH-DSA-sigVer-FIPS205',
     'acvp_slhdsa_sigver.json',
     perGroup: 4,

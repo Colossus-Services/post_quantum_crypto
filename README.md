@@ -268,6 +268,12 @@ expanded key without its seed is checked for internal consistency:
 - **ML-DSA:** the public key is recomputed (FIPS 204 `t = A·s1 + s2`), which
   rejects out-of-range or inconsistent keys. An expanded-only ML-DSA key
   therefore imports on its own, without its public key.
+- **SLH-DSA:** `PK.root` is recomputed from `SK.seed` and `PK.seed` (FIPS 205
+  Algorithm 18). That costs a key generation: milliseconds for the "f"
+  parameter sets, 1–2 s for the "s" sets, on every import and key-store
+  load. Loading a key record your application wrote itself can skip it:
+  `decodeKey`, `importPrivateKeyWithPassword` and `KeyStore.get` take
+  `verifySlhDsaKey: false`.
 
 Keys that fail raise `InvalidKeyException`; nothing is left half-imported.
 
@@ -348,8 +354,10 @@ The library depends only on package-owned interfaces (`KemPrimitive`,
 `SignaturePrimitive`, `AeadCipher`, `Kdf`, `HashFunction`, `X25519Primitive`,
 `Argon2idPrimitive`, ...). The third-party libraries live in single adapter
 files under `lib/src/providers/`. The one exception is the ML-DSA
-expanded-key check, which uses pqcrypto's SHAKE128 directly. It validates
-key structure rather than performing a pluggable cryptographic operation.
+private-key check, which validates key structure rather than perform a
+pluggable cryptographic operation and uses pqcrypto's SHAKE128 directly.
+The SLH-DSA check is part of the backend
+(`SignaturePrimitive.publicKeyFromSecretKey`).
 
 | Provider | Library | Primitives |
 |---|---|---|
@@ -417,7 +425,7 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
   |---|---|
   | FIPS 203 (ML-KEM) | NIST ACVP; Wycheproof (incl. CCTV edge cases) |
   | FIPS 204 (ML-DSA) | NIST ACVP; Wycheproof (sign, verify, invalid keys) |
-  | FIPS 205 (SLH-DSA) | NIST ACVP |
+  | FIPS 205 (SLH-DSA) | NIST ACVP (keyGen, sigGen, sigVer) |
   | RFC 9935 / RFC 9881 (ML-KEM / ML-DSA keys in X.509) | Appendix C example and inconsistent keys, byte for byte |
   | RFC 9180 + draft-ietf-hpke-pq (HPKE) | hpke-pq vectors |
   | X-Wing (draft-connolly-cfrg-xwing-kem) | draft vectors |

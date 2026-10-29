@@ -116,14 +116,26 @@ final class KeyStore {
   /// Throws [InvalidKeyException] when the stored entry holds a different
   /// key, or a private key where a public one belongs (or vice versa), e.g.
   /// after a file was copied over another.
-  Future<QuantumKey?> get(KeyId id, {bool private = false}) async {
+  ///
+  /// [verifySlhDsaKey] false skips the SLH-DSA private-key check, a key
+  /// generation that takes 1–2 s for the "s" parameter sets (see
+  /// [PostQuantumCryptoEngine.decodeKey]).
+  Future<QuantumKey?> get(
+    KeyId id, {
+    bool private = false,
+    bool verifySlhDsaKey = true,
+  }) async {
     final data = await storage.read(_name(id, private));
     if (data == null) return null;
     final QuantumKey key;
     try {
       key = private && _password != null
-          ? engine.importPrivateKeyWithPassword(data, _password)
-          : engine.decodeKey(data);
+          ? engine.importPrivateKeyWithPassword(
+              data,
+              _password,
+              verifySlhDsaKey: verifySlhDsaKey,
+            )
+          : engine.decodeKey(data, verifySlhDsaKey: verifySlhDsaKey);
     } finally {
       zeroize(data);
     }

@@ -384,8 +384,19 @@ final class PostQuantumCryptoEngine {
 
   /// Parses a `PQCR` key record. Private keys are re-derived and must match
   /// the stored public key.
-  QuantumKey decodeKey(List<int> bytes) =>
-      _codec.decodeRecord(Uint8List.fromList(bytes));
+  ///
+  /// An SLH-DSA private key is checked by recomputing its `PK.root` from
+  /// `SK.seed` and `PK.seed` (FIPS 205), which costs a key generation:
+  /// milliseconds for the "f" parameter sets, 1–2 s for the "s" sets. Pass
+  /// [verifySlhDsaKey] false to skip it for records whose integrity is
+  /// already established, for example ones this application wrote itself.
+  /// An inconsistent key then loads and produces only signatures that fail
+  /// verification.
+  QuantumKey decodeKey(List<int> bytes, {bool verifySlhDsaKey = true}) =>
+      _codec.decodeRecord(
+        Uint8List.fromList(bytes),
+        verifySlhDsaKey: verifySlhDsaKey,
+      );
 
   /// [decodeKey], requiring an [EncryptionPublicKey].
   EncryptionPublicKey decodeEncryptionPublicKey(List<int> bytes) =>
@@ -400,8 +411,12 @@ final class PostQuantumCryptoEngine {
       _expect<SigningPublicKey>(decodeKey(bytes));
 
   /// [decodeKey], requiring a [SigningPrivateKey].
-  SigningPrivateKey decodeSigningPrivateKey(List<int> bytes) =>
-      _expect<SigningPrivateKey>(decodeKey(bytes));
+  SigningPrivateKey decodeSigningPrivateKey(
+    List<int> bytes, {
+    bool verifySlhDsaKey = true,
+  }) => _expect<SigningPrivateKey>(
+    decodeKey(bytes, verifySlhDsaKey: verifySlhDsaKey),
+  );
 
   static T _expect<T extends QuantumKey>(QuantumKey key) {
     if (key is T) return key;
@@ -476,14 +491,22 @@ final class PostQuantumCryptoEngine {
 
   /// Decrypts a password-protected key export. A wrong password or any
   /// tampering raises [DecryptionFailedException].
-  QuantumKey importPrivateKeyWithPassword(List<int> bytes, String password) {
+  ///
+  /// The export is authenticated, so [verifySlhDsaKey] false (see
+  /// [decodeKey]) only gives up detecting a key that was already
+  /// inconsistent when it was exported.
+  QuantumKey importPrivateKeyWithPassword(
+    List<int> bytes,
+    String password, {
+    bool verifySlhDsaKey = true,
+  }) {
     final record = _password.open(
       ObjectType.passwordProtectedKey,
       Uint8List.fromList(bytes),
       password,
     );
     try {
-      return _codec.decodeRecord(record);
+      return _codec.decodeRecord(record, verifySlhDsaKey: verifySlhDsaKey);
     } finally {
       zeroize(record);
     }

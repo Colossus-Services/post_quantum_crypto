@@ -1,6 +1,8 @@
 @Tags(['vectors'])
 library;
 
+import 'dart:typed_data';
+
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
@@ -12,6 +14,39 @@ SignatureAlgorithm _alg(Object? name) =>
 
 void main() {
   final backend = standardCryptoBackend;
+
+  group('SLH-DSA keyGen (NIST ACVP, FIPS 205)', () {
+    for (final (g, t) in acvpTests('acvp_slhdsa_keygen.json')) {
+      final alg = _alg(g['parameterSet']);
+      test('${alg.standardName} tcId ${t['tcId']}', () {
+        final sk = hex(t['sk']);
+        // FIPS 205: sk = SK.seed || SK.prf || PK.seed || PK.root.
+        expect(sk, [
+          ...hex(t['skSeed']),
+          ...hex(t['skPrf']),
+          ...hex(t['pkSeed']),
+          ...hex(t['pk']).sublist(alg.publicKeyLength ~/ 2),
+        ]);
+        // The import check recomputes PK.root and accepts the official key.
+        // No public key is passed, so the recomputation alone must yield it.
+        final key = engine.importSigningPrivateKeyExpanded(sk, algorithm: alg);
+        expect(key.publicKey.bytes, hex(t['pk']));
+        // Key generation from SK.seed || SK.prf || PK.seed (FIPS 205
+        // Algorithm 18) reproduces the official key pair.
+        final kp = backend.postQuantum
+            .signature(alg)
+            .generate(
+              Uint8List.fromList([
+                ...hex(t['skSeed']),
+                ...hex(t['skPrf']),
+                ...hex(t['pkSeed']),
+              ]),
+            );
+        expect(kp.secretKey, sk);
+        expect(kp.publicKey, hex(t['pk']));
+      });
+    }
+  });
 
   group('SLH-DSA sigVer external/pure (NIST ACVP, FIPS 205)', () {
     for (final (g, t) in acvpTests('acvp_slhdsa_sigver.json')) {

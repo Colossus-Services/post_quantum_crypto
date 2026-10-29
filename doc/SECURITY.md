@@ -19,7 +19,14 @@
   keys by the FIPS 203 hash check and a pairwise-consistency test (an
   encapsulation must decapsulate); ML-DSA keys by recomputing
   `t = A·s1 + s2` (FIPS 204), which checks the s1/s2 ranges and `t0` and
-  derives the public key.
+  derives the public key; SLH-DSA keys by recomputing `PK.root` from
+  `SK.seed` and `PK.seed` (FIPS 205 Algorithm 18). For the SLH-DSA "s"
+  parameter sets this costs a key generation, 1–2 s in pure Dart, on every
+  import and every key-store load. Loading a key record (`decodeKey`,
+  `importPrivateKeyWithPassword`, `KeyStore.get`) can skip it with
+  `verifySlhDsaKey: false`; an inconsistent key then loads and produces
+  only signatures that fail verification. PKCS#8 and raw imports are always
+  checked.
 
 ## What the primitives provide
 
@@ -97,14 +104,6 @@ both sides agree on the labels they supplied.
   for stronger protection.
 - **Revocation.** Removing a recipient (rewrap) or revoking a key does not
   revoke access to data or keys an attacker already copied.
-- **SLH-DSA key generation** uses pqcrypto's own `Random.secure()` (pqcrypto
-  exposes no seeded entry point); all other randomness comes from this
-  package's source.
-- **SLH-DSA private-key import** takes the public key from the secret key
-  (FIPS 205 stores `PK.seed || PK.root` inside it) without recomputing
-  `PK.root`. A corrupted unauthenticated import (PKCS#8, raw bytes) is not
-  detected until its signatures fail to verify; key records protected with a
-  password are authenticated and unaffected.
 - **Endpoints.** Post-quantum algorithms do not protect against compromised
   endpoints, stolen keys, malicious applications or implementation bugs.
 - **Web performance.** Argon2id is slow on dart2js (about 2.6 s for
