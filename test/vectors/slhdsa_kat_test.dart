@@ -1,6 +1,8 @@
 @Tags(['vectors'])
 library;
 
+import 'dart:typed_data';
+
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
@@ -26,12 +28,22 @@ void main() {
           ...hex(t['pk']).sublist(alg.publicKeyLength ~/ 2),
         ]);
         // The import check recomputes PK.root and accepts the official key.
-        final key = engine.importSigningPrivateKeyExpanded(
-          sk,
-          publicKey: hex(t['pk']),
-          algorithm: alg,
-        );
+        // No public key is passed, so the recomputation alone must yield it.
+        final key = engine.importSigningPrivateKeyExpanded(sk, algorithm: alg);
         expect(key.publicKey.bytes, hex(t['pk']));
+        // Key generation from SK.seed || SK.prf || PK.seed (FIPS 205
+        // Algorithm 18) reproduces the official key pair.
+        final kp = backend.postQuantum
+            .signature(alg)
+            .generate(
+              Uint8List.fromList([
+                ...hex(t['skSeed']),
+                ...hex(t['skPrf']),
+                ...hex(t['pkSeed']),
+              ]),
+            );
+        expect(kp.secretKey, sk);
+        expect(kp.publicKey, hex(t['pk']));
       });
     }
   });

@@ -9,7 +9,6 @@ import '../errors.dart';
 import 'key_metadata.dart';
 import 'keys.dart';
 import 'ml_dsa_expanded.dart';
-import 'slh_dsa_expanded.dart';
 
 /// Key generation and raw import. Internal; reached through the engine.
 @internal
@@ -112,8 +111,13 @@ final class KeyFactory {
         metadata,
       );
     } else {
-      final kp = prim.generate();
-      sk = _signingKey(algorithm, null, kp.secretKey, kp.publicKey, metadata);
+      final randomness = _ctx.randomBytes(prim.keyGenerationRandomnessLength);
+      try {
+        final kp = prim.generate(randomness);
+        sk = _signingKey(algorithm, null, kp.secretKey, kp.publicKey, metadata);
+      } finally {
+        zeroize(randomness);
+      }
     }
     return SigningKeyPair(sk.publicKey, sk);
   }
@@ -148,22 +152,27 @@ final class KeyFactory {
   /// recomputed from the secret key (which also checks s1, s2 and t0, see
   /// ml_dsa_expanded.dart) and must match `tr = H(pk)` and [publicKey] when
   /// given. For SLH-DSA, `PK.root` is recomputed from `SK.seed` and
-  /// `PK.seed` (slh_dsa_expanded.dart) and must match the secret key and
-  /// [publicKey] when given.
+  /// `PK.seed` (`SignaturePrimitive.publicKeyFromSecretKey`) and must match
+  /// the secret key and [publicKey] when given. With [verifySlhDsaKey] false
+  /// that recomputation (a key generation) is skipped and the public key is
+  /// taken from the secret key as stored.
   SigningPrivateKey signingPrivateKeyFromExpanded(
     SignatureAlgorithm algorithm,
     Uint8List secretKey,
     List<int>? publicKey,
-    KeyMetadata metadata,
-  ) {
+    KeyMetadata metadata, {
+    bool verifySlhDsaKey = true,
+  }) {
     final prim = _ctx.signature(algorithm);
     if (secretKey.length != prim.secretKeyLength) {
       throw const InvalidKeyException('Signing secret key has wrong length');
     }
     final Uint8List pk;
     if (algorithm.isSlhDsa) {
-      // Recomputes PK.root, so an inconsistent key is rejected.
-      pk = slhDsaPublicKeyFromSecretKey(algorithm, secretKey);
+      // sk = SK.seed || SK.prf || PK.seed || PK.root; pk = PK.seed || PK.root.
+      pk = verifySlhDsaKey
+          ? prim.publicKeyFromSecretKey(secretKey)
+          : secretKey.sublist(secretKey.length - prim.publicKeyLength);
       if (publicKey != null && !constantTimeEquals(pk, publicKey)) {
         throw const InvalidKeyException('Public key does not match');
       }

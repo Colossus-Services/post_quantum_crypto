@@ -10,22 +10,45 @@
   listed in SECURITY.md.
   - Cost: one key generation per import and per key-store load. That is
     milliseconds for the "f" parameter sets and 1–2 s for the "s" sets.
+  - Loading a key record can skip it: `decodeKey`,
+    `decodeSigningPrivateKey`, `importPrivateKeyWithPassword` and
+    `KeyStore.get` take `verifySlhDsaKey` (default `true`). PKCS#8 and raw
+    imports are always checked.
+- **SLH-DSA key generation uses the package's random source.** It used
+  pqcrypto's own `Random.secure()`, so a random source configured on the
+  engine was ignored for it. All randomness now comes from the package.
+  This closes the SLH-DSA key-generation limitation in SECURITY.md.
 
 ### Changed
 
-- **pqcrypto: ^0.4.4.** The check uses `SlhDsa.generateKeyPairSeeded`
-  (FIPS 205 Algorithm 18), exported from pqcrypto 0.4.4 onwards
-  ([turkananation/pqcrypto#69](https://github.com/turkananation/pqcrypto/pull/69)).
+- **pqcrypto: ^0.4.4**, which exports FIPS 205 Algorithm 18
+  (`SlhDsa.generateKeyPairSeeded`,
+  [turkananation/pqcrypto#69](https://github.com/turkananation/pqcrypto/pull/69)).
+- **`SignaturePrimitive`** (custom backends):
+  - `generate()` becomes `generate(Uint8List randomness)`, with the new
+    `keyGenerationRandomnessLength`. For SLH-DSA the randomness is
+    `SK.seed || SK.prf || PK.seed`.
+  - New `publicKeyFromSecretKey(secretKey)`, which checks an SLH-DSA
+    secret key and returns its public key. The SLH-DSA check now runs in
+    the backend, not in a separate file importing pqcrypto.
+- Loading a key record compares the stored public key once, not twice.
 
 ### Tests
 
 - NIST ACVP SLH-DSA keyGen vectors (SHAKE parameter sets): the official
-  secret keys pass the check and yield the official public keys.
+  secret keys pass the check and yield the official public keys without
+  being given them, and key generation from the official seeds reproduces
+  the official key pair.
 - Mutation tests for SLH-DSA (128f/192f/256f):
   - `SK.seed`, `PK.seed` and `PK.root` changes are rejected, via raw and
     PKCS#8 import;
   - `SK.prf`, which FIPS 205 leaves unconstrained, is accepted and still
-    signs.
+    signs;
+  - with `verifySlhDsaKey: false` a corrupted key record loads (and its
+    signatures fail), while the stored public key is still compared.
+- SLH-DSA-SHAKE-128s: a `PK.root` change is rejected (tagged `slow`).
+- SLH-DSA key generation is deterministic under a deterministic random
+  source.
 
 ## 2.1.1
 

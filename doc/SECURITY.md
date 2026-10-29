@@ -22,7 +22,11 @@
   derives the public key; SLH-DSA keys by recomputing `PK.root` from
   `SK.seed` and `PK.seed` (FIPS 205 Algorithm 18). For the SLH-DSA "s"
   parameter sets this costs a key generation, 1–2 s in pure Dart, on every
-  import and every key-store load.
+  import and every key-store load. Loading a key record (`decodeKey`,
+  `importPrivateKeyWithPassword`, `KeyStore.get`) can skip it with
+  `verifySlhDsaKey: false`; an inconsistent key then loads and produces
+  only signatures that fail verification. PKCS#8 and raw imports are always
+  checked.
 
 ## What the primitives provide
 
@@ -100,9 +104,6 @@ both sides agree on the labels they supplied.
   for stronger protection.
 - **Revocation.** Removing a recipient (rewrap) or revoking a key does not
   revoke access to data or keys an attacker already copied.
-- **SLH-DSA key generation** uses pqcrypto's own `Random.secure()` (pqcrypto
-  exposes no seeded entry point); all other randomness comes from this
-  package's source.
 - **Endpoints.** Post-quantum algorithms do not protect against compromised
   endpoints, stolen keys, malicious applications or implementation bugs.
 - **Web performance.** Argon2id is slow on dart2js (about 2.6 s for

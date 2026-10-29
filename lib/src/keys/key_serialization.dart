@@ -139,30 +139,41 @@ final class KeyCodec {
   }
 
   /// Decodes a key record. Private keys are re-derived from their private
-  /// material and must reproduce the stored public key.
-  QuantumKey decodeRecord(Uint8List bytes) => parseStrict(() {
-    final r = ByteReader(bytes);
-    _ctx.readObjectHeader(r, ObjectType.keyRecord);
-    final kind = r.u8();
-    final algId = r.u16();
-    final pk = r.bytes32(max: _maxKeyField);
-    int? form;
-    Uint8List? material;
-    if (kind == _kindEncPriv || kind == _kindSigPriv) {
-      form = r.u8();
-      if (form != _formSeed && form != _formExpanded) {
-        throw const MalformedDataException('Unknown private key form');
-      }
-      material = r.bytes32(max: _maxKeyField);
-    }
-    final metadata = KeyMetadata.read(r);
-    r.expectEnd();
-    try {
-      return _buildKey(kind, algId, pk, form, material, metadata);
-    } finally {
-      zeroize(material);
-    }
-  });
+  /// material and must reproduce the stored public key. [verifySlhDsaKey]
+  /// false skips the SLH-DSA `PK.root` recomputation (see
+  /// `KeyFactory.signingPrivateKeyFromExpanded`).
+  QuantumKey decodeRecord(Uint8List bytes, {bool verifySlhDsaKey = true}) =>
+      parseStrict(() {
+        final r = ByteReader(bytes);
+        _ctx.readObjectHeader(r, ObjectType.keyRecord);
+        final kind = r.u8();
+        final algId = r.u16();
+        final pk = r.bytes32(max: _maxKeyField);
+        int? form;
+        Uint8List? material;
+        if (kind == _kindEncPriv || kind == _kindSigPriv) {
+          form = r.u8();
+          if (form != _formSeed && form != _formExpanded) {
+            throw const MalformedDataException('Unknown private key form');
+          }
+          material = r.bytes32(max: _maxKeyField);
+        }
+        final metadata = KeyMetadata.read(r);
+        r.expectEnd();
+        try {
+          return _buildKey(
+            kind,
+            algId,
+            pk,
+            form,
+            material,
+            metadata,
+            verifySlhDsaKey: verifySlhDsaKey,
+          );
+        } finally {
+          zeroize(material);
+        }
+      });
 
   QuantumKey _buildKey(
     int kind,
@@ -170,8 +181,9 @@ final class KeyCodec {
     Uint8List pk,
     int? form,
     Uint8List? material,
-    KeyMetadata metadata,
-  ) {
+    KeyMetadata metadata, {
+    required bool verifySlhDsaKey,
+  }) {
     switch (kind) {
       case _kindEncPub:
         return _factory.encryptionPublicKey(
@@ -201,14 +213,21 @@ final class KeyCodec {
         );
       case _kindSigPriv:
         final alg = SignatureAlgorithm.fromId(algId);
-        final key = form == _formSeed
-            ? _factory.signingPrivateKeyFromSeed(alg, material!, metadata)
-            : _factory.signingPrivateKeyFromExpanded(
-                alg,
-                material!,
-                pk,
-                metadata,
-              );
+        if (form == _formExpanded) {
+          // Checks the secret key against the stored public key itself.
+          return _factory.signingPrivateKeyFromExpanded(
+            alg,
+            material!,
+            pk,
+            metadata,
+            verifySlhDsaKey: verifySlhDsaKey,
+          );
+        }
+        final key = _factory.signingPrivateKeyFromSeed(
+          alg,
+          material!,
+          metadata,
+        );
         if (!constantTimeEquals(key.publicKey.bytes, pk)) {
           key.destroy();
           throw const InvalidKeyException('Private and public key mismatch');

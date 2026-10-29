@@ -271,7 +271,9 @@ expanded key without its seed is checked for internal consistency:
 - **SLH-DSA:** `PK.root` is recomputed from `SK.seed` and `PK.seed` (FIPS 205
   Algorithm 18). That costs a key generation: milliseconds for the "f"
   parameter sets, 1–2 s for the "s" sets, on every import and key-store
-  load.
+  load. Loading a key record your application wrote itself can skip it:
+  `decodeKey`, `importPrivateKeyWithPassword` and `KeyStore.get` take
+  `verifySlhDsaKey: false`.
 
 Keys that fail raise `InvalidKeyException`; nothing is left half-imported.
 
@@ -351,11 +353,11 @@ stream reaches the caller of `encryptStream`/`decryptStream` as is.
 The library depends only on package-owned interfaces (`KemPrimitive`,
 `SignaturePrimitive`, `AeadCipher`, `Kdf`, `HashFunction`, `X25519Primitive`,
 `Argon2idPrimitive`, ...). The third-party libraries live in single adapter
-files under `lib/src/providers/`. The exceptions are the private-key
-checks, which validate key structure rather than perform a pluggable
-cryptographic operation. The ML-DSA check uses pqcrypto's SHAKE128
-directly. The SLH-DSA check uses pqcrypto's FIPS 205 Algorithm 18
-(`SlhDsa.generateKeyPairSeeded`).
+files under `lib/src/providers/`. The one exception is the ML-DSA
+private-key check, which validates key structure rather than perform a
+pluggable cryptographic operation and uses pqcrypto's SHAKE128 directly.
+The SLH-DSA check is part of the backend
+(`SignaturePrimitive.publicKeyFromSecretKey`).
 
 | Provider | Library | Primitives |
 |---|---|---|
