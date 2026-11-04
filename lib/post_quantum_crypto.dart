@@ -17,6 +17,14 @@ library;
 
 export 'src/algorithms/algorithms.dart';
 export 'src/background/background.dart';
+export 'src/channel/secure_channel.dart'
+    show ClientAuthorizer, SecureChannel, SecureChannelOptions;
+export 'src/channel/secure_stream.dart'
+    show
+        SecureStream,
+        SecureStreamOptions,
+        SecureStreamReader,
+        SecureStreamWriter;
 export 'src/encoding/text_encoding.dart';
 export 'src/encryption/envelope.dart' show EncryptedEnvelope, EnvelopeRecipient;
 export 'src/encryption/streaming.dart'

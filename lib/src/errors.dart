@@ -62,6 +62,21 @@ final class SignatureVerificationException extends PostQuantumCryptoException {
   ]);
 }
 
+/// A `SecureStream` was tampered with, truncated, timed out or malformed, or
+/// its header could not be opened. The underlying stream is closed when
+/// this is thrown, and the stream cannot be used afterwards.
+base class SecureStreamException extends PostQuantumCryptoException {
+  const SecureStreamException(super.message);
+}
+
+/// A `SecureChannel` handshake failed: the peer could not be authenticated,
+/// was not authorized, or broke the protocol. Errors on an established
+/// channel are [SecureStreamException]s, since each direction of a channel
+/// is a `SecureStream`.
+final class SecureChannelException extends SecureStreamException {
+  const SecureChannelException(super.message);
+}
+
 /// The platform does not provide a cryptographically secure random source.
 /// Operations fail closed instead of falling back to a weaker generator.
 final class SecureRandomUnavailableException

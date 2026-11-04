@@ -1,16 +1,10 @@
-@Tags(['platform'])
-@TestOn('vm')
-library;
-
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
 import 'package:test/test.dart';
 
-import '../../example/secure_socket.dart';
 import '../support/test_engine.dart';
 
 /// Rewrites one frame on its way to the peer: returns the chunks to forward
@@ -20,10 +14,12 @@ typedef FrameHook = List<List<int>> Function(int index, Uint8List frame);
 /// An in-memory connection whose two directions pass through hooks, so a
 /// test can act as a man-in-the-middle. Every `add` on a channel's output is
 /// exactly one frame (`u32 length || type || ...`), so [FrameHook] indices
-/// are frame numbers:
+/// are frame numbers. Without client authentication:
 ///
 /// - client → server: 0 ClientHello, 1 KeyExchange, 2 Finished, 3+ records;
 /// - server → client: 0 ServerHello, 1 Finished, 2+ records.
+///
+/// With it, the client's ClientAuth record is frame 2 and Finished frame 3.
 final class Wire {
   final toServer = StreamController<List<int>>();
   final toClient = StreamController<List<int>>();
@@ -59,49 +55,75 @@ final class Wire {
 
 const serverId = 'server-1';
 const clientId = 'client-7';
+const options = SecureChannelOptions(protocol: 'test/v1');
 
 late SigningKeyPair identity;
+late SigningKeyPair clientKey;
 
-Future<PqSecureChannel> startServer(
+Future<SecureChannel> startServer(
   Wire w, {
-  Duration timeout = const Duration(seconds: 30),
-  int maxMessageLength = PqSecureChannel.defaultMaxMessageLength,
-}) => PqSecureChannel.server(
+  SecureChannelOptions options = options,
+  ClientAuthorizer? authorizeClient,
+  PostQuantumCryptoEngine? serverEngine,
+}) => SecureChannel.accept(
   w.toServer.stream,
   w.serverOut,
-  engine: engine,
   identity: identity,
   serverId: serverId,
-  timeout: timeout,
-  maxMessageLength: maxMessageLength,
+  authorizeClient: authorizeClient,
+  engine: serverEngine ?? engine,
+  options: options,
 );
 
-Future<PqSecureChannel> startClient(
+Future<SecureChannel> startClient(
   Wire w, {
   SigningPublicKey? pinned,
   String expectedServerId = serverId,
-  Duration timeout = const Duration(seconds: 30),
-}) => PqSecureChannel.client(
+  SigningKeyPair? clientIdentity,
+  SecureChannelOptions options = options,
+}) => SecureChannel.connect(
   w.toClient.stream,
   w.clientOut,
-  engine: engine,
-  serverIdentity: pinned ?? identity.publicKey,
+  serverKey: pinned ?? identity.publicKey,
   serverId: expectedServerId,
   clientId: clientId,
-  timeout: timeout,
+  clientIdentity: clientIdentity,
+  engine: engine,
+  options: options,
 );
 
 /// Runs a successful handshake over [w].
-Future<(PqSecureChannel, PqSecureChannel)> connect(
+Future<(SecureChannel, SecureChannel)> connect(
   Wire w, {
-  int maxMessageLength = PqSecureChannel.defaultMaxMessageLength,
+  SecureChannelOptions clientOptions = options,
+  SecureChannelOptions serverOptions = options,
+  ClientAuthorizer? authorizeClient,
+  SigningKeyPair? clientIdentity,
 }) async {
-  final server = startServer(w, maxMessageLength: maxMessageLength);
-  final client = startClient(w);
+  final server = startServer(
+    w,
+    options: serverOptions,
+    authorizeClient: authorizeClient,
+  );
+  final client = startClient(
+    w,
+    options: clientOptions,
+    clientIdentity: clientIdentity,
+  );
   return (await client, await server);
 }
 
+/// An error on an established channel: one of its secure streams failed.
 Matcher channelError([String? message]) => throwsA(
+  isA<SecureStreamException>().having(
+    (e) => e.message,
+    'message',
+    message == null ? anything : contains(message),
+  ),
+);
+
+/// A handshake error, always the more specific [SecureChannelException].
+Matcher handshakeError([String? message]) => throwsA(
   isA<SecureChannelException>().having(
     (e) => e.message,
     'message',
@@ -115,14 +137,30 @@ Future<void> expectHandshakeFails(
   Wire w, {
   SigningPublicKey? pinned,
   String expectedServerId = serverId,
+  SigningKeyPair? clientIdentity,
+  ClientAuthorizer? authorizeClient,
+  SecureChannelOptions clientOptions = options,
+  SecureChannelOptions serverOptions = options,
+  PostQuantumCryptoEngine? serverEngine,
   String? client,
   String? server,
 }) async {
-  final s = startServer(w);
-  final c = startClient(w, pinned: pinned, expectedServerId: expectedServerId);
+  final s = startServer(
+    w,
+    options: serverOptions,
+    authorizeClient: authorizeClient,
+    serverEngine: serverEngine,
+  );
+  final c = startClient(
+    w,
+    pinned: pinned,
+    expectedServerId: expectedServerId,
+    clientIdentity: clientIdentity,
+    options: clientOptions,
+  );
   await Future.wait([
-    expectLater(c, channelError(client)),
-    expectLater(s, channelError(server)),
+    expectLater(c, handshakeError(client)),
+    expectLater(s, handshakeError(server)),
   ]);
 }
 
@@ -137,19 +175,60 @@ List<List<int>> flipAt(Uint8List f, int index, [int bit = 0]) => [
   flip(f, index, bit),
 ];
 
-/// Offset of the first byte after the type in a frame.
+/// Returns a copy of [f] with byte [index] set to [value].
+List<List<int>> setAt(Uint8List f, int index, int value) => [
+  Uint8List.fromList(f)..[index] = value,
+];
+
+// Offsets in a frame: u32 length, then the type byte.
+const typeAt = 4;
 const bodyStart = 5;
+
+// ServerHello: type || flags || serverNonce(32) || u16 length || key ...
+const serverFlagsAt = bodyStart;
+const ephemeralStart = bodyStart + 1 + 32 + 2;
+
+const recordData = 0x17;
+const recordDataMore = 0x18;
+const recordClose = 0x15;
 
 void main() {
   setUpAll(() {
     identity = engine.generateSigningKeyPair();
+    clientKey = engine.generateSigningKeyPair();
   });
 
   group('handshake', () {
-    test('both sides agree and learn the peer ids', () async {
+    test('both sides agree and learn the peer', () async {
       final (client, server) = await connect(Wire());
       expect(client.peerId, serverId);
+      expect(client.peerKey, identity.publicKey);
       expect(server.peerId, clientId);
+      expect(server.peerKey, isNull); // the client did not authenticate
+      expect(client.protocol, 'test/v1');
+      expect(client.aead, AeadAlgorithm.aes256Gcm);
+      await client.close();
+      await server.close();
+    });
+
+    test('the default engine and options work', () async {
+      final w = Wire();
+      final s = SecureChannel.accept(
+        w.toServer.stream,
+        w.serverOut,
+        identity: identity,
+        serverId: serverId,
+      );
+      final c = SecureChannel.connect(
+        w.toClient.stream,
+        w.clientOut,
+        serverKey: identity.publicKey,
+        serverId: serverId,
+      );
+      final (client, server) = (await c, await s);
+      expect(server.peerId, '');
+      client.send([1, 2, 3]);
+      expect(await server.receive(), [1, 2, 3]);
       await client.close();
       await server.close();
     });
@@ -172,12 +251,52 @@ void main() {
       }
     });
 
+    test('ChaCha20-Poly1305 is negotiated by the client', () async {
+      const chacha = SecureChannelOptions(
+        protocol: 'test/v1',
+        aead: AeadAlgorithm.chacha20Poly1305,
+      );
+      final (client, server) = await connect(Wire(), clientOptions: chacha);
+      expect(client.aead, AeadAlgorithm.chacha20Poly1305);
+      expect(server.aead, AeadAlgorithm.chacha20Poly1305);
+      client.send(utf8.encode('chacha'));
+      expect(utf8.decode((await server.receive())!), 'chacha');
+      await client.close();
+      await server.close();
+    });
+
+    test('an AEAD the server policy forbids is refused', () async {
+      await expectHandshakeFails(
+        Wire(),
+        clientOptions: const SecureChannelOptions(
+          protocol: 'test/v1',
+          aead: AeadAlgorithm.chacha20Poly1305,
+        ),
+        serverEngine: engine.withPolicy(
+          SecurityPolicy.standard.copyWith(
+            allowedAeads: {AeadAlgorithm.aes256Gcm},
+          ),
+        ),
+        server: 'Handshake failed',
+        client: 'closed by peer',
+      );
+    });
+
+    test('a different application protocol is refused', () async {
+      await expectHandshakeFails(
+        Wire(),
+        clientOptions: const SecureChannelOptions(protocol: 'test/v2'),
+        server: 'Application protocol mismatch',
+        client: 'closed by peer',
+      );
+    });
+
     test('an unpinned server identity is refused', () async {
       await expectHandshakeFails(
         Wire(),
         pinned: engine.generateSigningKeyPair().publicKey,
         client: 'Server identity could not be verified',
-        server: 'Connection closed by peer',
+        server: 'closed by peer',
       );
     });
 
@@ -190,8 +309,6 @@ void main() {
     });
 
     test('a substituted ephemeral key is refused (MITM)', () async {
-      // 0x02 || serverNonce(32) || u16 length || ephemeral key ...
-      const ephemeralStart = bodyStart + 32 + 2;
       await expectHandshakeFails(
         Wire(
           fromServer: (i, f) => i == 0 ? flipAt(f, ephemeralStart + 100) : [f],
@@ -203,7 +320,7 @@ void main() {
     test('a modified ClientHello is detected by the client', () async {
       // The server signs the hello it received, not the one the client sent.
       await expectHandshakeFails(
-        Wire(fromClient: (i, f) => i == 0 ? flipAt(f, bodyStart + 1) : [f]),
+        Wire(fromClient: (i, f) => i == 0 ? flipAt(f, bodyStart + 5) : [f]),
         client: 'Server identity could not be verified',
       );
     });
@@ -226,7 +343,23 @@ void main() {
       await expectHandshakeFails(
         Wire(fromClient: (i, f) => i == 0 ? flipAt(f, bodyStart, 1) : [f]),
         server: 'Unsupported protocol version',
-        client: 'Connection closed by peer',
+        client: 'closed by peer',
+      );
+    });
+
+    test('an unknown AEAD id is refused', () async {
+      await expectHandshakeFails(
+        Wire(
+          fromClient: (i, f) => i == 0 ? setAt(f, bodyStart + 2, 0x7f) : [f],
+        ),
+        server: 'Handshake failed',
+      );
+    });
+
+    test('unknown ServerHello flags are refused', () async {
+      await expectHandshakeFails(
+        Wire(fromServer: (i, f) => i == 0 ? flipAt(f, serverFlagsAt, 7) : [f]),
+        client: 'Malformed handshake message',
       );
     });
 
@@ -248,7 +381,7 @@ void main() {
         Wire(
           fromClient: (i, f) => i == 0
               ? [
-                  frame([0x17, 1, 2, 3]),
+                  frame([recordData, 1, 2, 3]),
                 ]
               : [f],
         ),
@@ -260,8 +393,104 @@ void main() {
       final w = Wire();
       w.toServer.stream.listen((_) {}); // nobody answers
       await expectLater(
-        startClient(w, timeout: const Duration(milliseconds: 200)),
-        channelError('timed out'),
+        startClient(
+          w,
+          options: const SecureChannelOptions(
+            protocol: 'test/v1',
+            handshakeTimeout: Duration(milliseconds: 200),
+          ),
+        ),
+        handshakeError('timed out'),
+      );
+    });
+  });
+
+  group('client authentication', () {
+    test('an authorized client is identified on the server', () async {
+      final seen = <(SigningPublicKey, String)>[];
+      final (client, server) = await connect(
+        Wire(),
+        clientIdentity: clientKey,
+        authorizeClient: (key, id) {
+          seen.add((key, id));
+          return key == clientKey.publicKey;
+        },
+      );
+      expect(seen, [(clientKey.publicKey, clientId)]);
+      expect(server.peerKey, clientKey.publicKey);
+      client.send([7]);
+      expect(await server.receive(), [7]);
+      await client.close();
+      await server.close();
+    });
+
+    test('an asynchronous authorizer is awaited', () async {
+      final (client, server) = await connect(
+        Wire(),
+        clientIdentity: clientKey,
+        authorizeClient: (key, id) async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          return true;
+        },
+      );
+      expect(server.peerKey, clientKey.publicKey);
+      await client.close();
+      await server.close();
+    });
+
+    test('the client key is not sent when not requested', () async {
+      final w = Wire();
+      final (client, server) = await connect(w, clientIdentity: clientKey);
+      expect(server.peerKey, isNull);
+      // ClientHello, KeyExchange, Finished: no ClientAuth record.
+      expect(w.clientFrames, hasLength(3));
+      await client.close();
+      await server.close();
+    });
+
+    test('a client without an identity is refused', () async {
+      await expectHandshakeFails(
+        Wire(),
+        authorizeClient: (_, _) => true,
+        client: 'Server requires client authentication',
+        server: 'closed by peer',
+      );
+    });
+
+    test('an unauthorized key is refused', () async {
+      await expectHandshakeFails(
+        Wire(),
+        clientIdentity: engine.generateSigningKeyPair(),
+        authorizeClient: (key, _) => key == clientKey.publicKey,
+        server: 'Client is not authorized',
+      );
+    });
+
+    test('a throwing authorizer refuses the client', () async {
+      await expectHandshakeFails(
+        Wire(),
+        clientIdentity: clientKey,
+        authorizeClient: (_, _) => throw StateError('database down'),
+        server: 'Client is not authorized',
+      );
+    });
+
+    test('a stripped client-auth flag fails the server signature', () async {
+      await expectHandshakeFails(
+        Wire(fromServer: (i, f) => i == 0 ? flipAt(f, serverFlagsAt) : [f]),
+        clientIdentity: clientKey,
+        authorizeClient: (_, _) => true,
+        client: 'Server identity could not be verified',
+      );
+    });
+
+    test('a dropped ClientAuth record is refused', () async {
+      await expectHandshakeFails(
+        Wire(fromClient: (i, f) => i == 2 ? [] : [f]),
+        clientIdentity: clientKey,
+        authorizeClient: (_, _) => true,
+        // Finished arrives under the record number ClientAuth had.
+        server: 'Record failed authentication',
       );
     });
   });
@@ -272,10 +501,10 @@ void main() {
       final sizes = [
         0,
         1,
-        PqSecureChannel.maxRecordPayload - 1,
-        PqSecureChannel.maxRecordPayload,
-        PqSecureChannel.maxRecordPayload + 1,
-        3 * PqSecureChannel.maxRecordPayload,
+        SecureStream.maxRecordPayload - 1,
+        SecureStream.maxRecordPayload,
+        SecureStream.maxRecordPayload + 1,
+        3 * SecureStream.maxRecordPayload,
         100000,
       ];
       for (final n in sizes) {
@@ -292,6 +521,16 @@ void main() {
       expect(await client.receive(), isNull);
     });
 
+    test('messages streams until the peer closes', () async {
+      final (client, server) = await connect(Wire());
+      for (final m in ['a', 'b', 'c']) {
+        client.send(utf8.encode(m));
+      }
+      await client.close();
+      expect(await server.messages.map(utf8.decode).toList(), ['a', 'b', 'c']);
+      await server.close();
+    });
+
     test('frames split into single bytes are reassembled', () async {
       List<List<int>> bytewise(int _, Uint8List f) => [
         for (final b in f) [b],
@@ -302,75 +541,75 @@ void main() {
       client.send(utf8.encode('one byte at a time'));
       expect(utf8.decode((await server.receive())!), 'one byte at a time');
       // A full-size record, one byte per chunk: buffering stays linear.
-      final full = Uint8List(PqSecureChannel.maxRecordPayload);
+      final full = Uint8List(SecureStream.maxRecordPayload);
       client.send(full);
       expect(await server.receive(), full);
       await client.close();
       expect(await server.receive(), isNull);
     });
 
-    Future<void> expectReceiveFails(Wire w, String message) async {
+    /// Sends 'first' and 'second' (records 3 and 4) through [w] and expects
+    /// 'first' to arrive and the next receive to fail with [message].
+    Future<void> expectSecondFails(Wire w, String message) async {
       final (client, server) = await connect(w);
       client
         ..send(utf8.encode('first'))
         ..send(utf8.encode('second'));
-      final results = <Object?>[];
-      try {
-        results
-          ..add(utf8.decode((await server.receive())!))
-          ..add(utf8.decode((await server.receive())!));
-      } on SecureChannelException catch (e) {
-        results.add(e);
-      }
-      expect(
-        results.last,
-        isA<SecureChannelException>().having(
-          (e) => e.message,
-          'message',
-          contains(message),
-        ),
-      );
-      // Only the message that arrived intact and in order was released.
-      expect(results.whereType<String>(), ['first']);
+      expect(utf8.decode((await server.receive())!), 'first');
+      await expectLater(server.receive(), channelError(message));
       // A failed channel stays failed.
       expect(server.receive, throwsStateError);
       expect(() => server.send([1]), throwsStateError);
+      expect(server.canSend, isFalse);
       await client.close();
     }
 
     test('a modified record is rejected', () async {
-      await expectReceiveFails(
+      await expectSecondFails(
         Wire(fromClient: (i, f) => i == 4 ? flipAt(f, f.length - 1) : [f]),
         'Record failed authentication',
       );
     });
 
-    test('a modified record type is rejected', () async {
-      // Turning "last fragment" into "more follows" changes the AAD.
-      await expectReceiveFails(
-        Wire(fromClient: (i, f) => i == 4 ? flipAt(f, 4, 4) : [f]),
+    test('a record retyped from "last" to "more follows" is rejected', () {
+      // Both are valid types: only the AAD tells them apart.
+      return expectSecondFails(
+        Wire(
+          fromClient: (i, f) {
+            if (i == 4) {
+              expect(f[typeAt], recordData);
+              return setAt(f, typeAt, recordDataMore);
+            }
+            return [f];
+          },
+        ),
+        'Record failed authentication',
+      );
+    });
+
+    test('a record with an unknown type is rejected', () async {
+      await expectSecondFails(
+        Wire(fromClient: (i, f) => i == 4 ? setAt(f, typeAt, 0x07) : [f]),
+        'Record failed authentication',
+      );
+    });
+
+    test('a replayed record is rejected', () async {
+      await expectSecondFails(
+        Wire(fromClient: (i, f) => i == 3 ? [f, f] : [f]),
         'Record failed authentication',
       );
     });
 
     test('a record shorter than a tag is rejected', () async {
-      final (client, server) = await connect(
+      await expectSecondFails(
         Wire(
-          fromClient: (i, f) => i == 3
+          fromClient: (i, f) => i == 4
               ? [
-                  frame([0x17, 1, 2]),
+                  frame([recordData, 1, 2]),
                 ]
               : [f],
         ),
-      );
-      client.send([1]);
-      await expectLater(server.receive(), channelError());
-      await client.close();
-    });
-
-    test('a replayed record is rejected', () async {
-      await expectReceiveFails(
-        Wire(fromClient: (i, f) => i == 3 ? [f, f] : [f]),
         'Record failed authentication',
       );
     });
@@ -415,7 +654,7 @@ void main() {
       await client.close();
     });
 
-    test("a record reflected back to its sender is rejected", () async {
+    test('a record reflected back to its sender is rejected', () async {
       late Wire w;
       w = Wire(
         // Replace the server's first record with the client's first record.
@@ -436,7 +675,7 @@ void main() {
       final (client, server) = await connect(
         Wire(
           // Drop the server's Close record; its connection still ends.
-          fromServer: (i, f) => f[4] == 0x15 ? [] : [f],
+          fromServer: (i, f) => f[typeAt] == recordClose ? [] : [f],
         ),
       );
       server.send(utf8.encode('partial'));
@@ -461,7 +700,7 @@ void main() {
     });
 
     for (final (name, length) in [
-      ('oversized', PqSecureChannel.maxFrameLength + 1),
+      ('oversized', SecureStream.maxFrameLength + 1),
       ('empty', 0),
     ]) {
       test('an $name frame is rejected before it is buffered', () async {
@@ -476,7 +715,13 @@ void main() {
     }
 
     test('messages over the receiver limit are rejected', () async {
-      final (client, server) = await connect(Wire(), maxMessageLength: 40000);
+      final (client, server) = await connect(
+        Wire(),
+        serverOptions: const SecureChannelOptions(
+          protocol: 'test/v1',
+          maxMessageLength: 40000,
+        ),
+      );
       client.send(Uint8List(40000));
       expect(await server.receive(), hasLength(40000));
       client.send(Uint8List(40001));
@@ -484,10 +729,29 @@ void main() {
       await client.close();
     });
 
+    test('a peer stalling past receiveTimeout fails the channel', () async {
+      final (client, server) = await connect(
+        Wire(
+          // The first record stops after its length prefix.
+          fromClient: (i, f) => i == 3 ? [f.sublist(0, 4)] : [f],
+        ),
+        serverOptions: const SecureChannelOptions(
+          protocol: 'test/v1',
+          receiveTimeout: Duration(milliseconds: 200),
+        ),
+      );
+      client.send([1]);
+      await expectLater(server.receive(), channelError('Receive timed out'));
+      expect(server.receive, throwsStateError);
+      await client.close();
+    });
+
     test('close is idempotent and ends sending', () async {
       final (client, server) = await connect(Wire());
+      expect(client.canSend, isTrue);
       await client.close();
       await client.close();
+      expect(client.canSend, isFalse);
       expect(() => client.send([1]), throwsStateError);
       expect(await server.receive(), isNull);
       await server.close();
@@ -506,8 +770,18 @@ void main() {
     test('abort is seen by the peer as truncation', () async {
       final (client, server) = await connect(Wire());
       await client.abort();
+      await client.abort();
       expect(() => client.send([1]), throwsStateError);
       await expectLater(server.receive(), channelError('truncated'));
+    });
+
+    test('abort during a receive reports a local abort', () async {
+      final (client, server) = await connect(Wire());
+      final pending = server.receive();
+      await server.abort();
+      await expectLater(pending, channelError('cancelled locally'));
+      expect(server.receive, throwsStateError);
+      await expectLater(client.receive(), channelError('truncated'));
     });
 
     test('concurrent receive calls are refused', () async {
@@ -519,40 +793,5 @@ void main() {
       await client.close();
       await server.close();
     });
-  });
-
-  test('works over a real TCP socket', () async {
-    final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(listener.close);
-    final served = listener.first.then((socket) async {
-      final channel = await PqSecureChannel.server(
-        socket,
-        socket,
-        engine: engine,
-        identity: identity,
-        serverId: serverId,
-      );
-      for (Uint8List? m; (m = await channel.receive()) != null;) {
-        channel.send(m!.reversed.toList());
-      }
-      await channel.close();
-    });
-
-    final socket = await Socket.connect(listener.address, listener.port);
-    final client = await PqSecureChannel.client(
-      socket,
-      socket,
-      engine: engine,
-      serverIdentity: identity.publicKey,
-      serverId: serverId,
-      clientId: clientId,
-    );
-    final big = Uint8List.fromList(List.generate(200000, (i) => i % 251));
-    for (final m in [utf8.encode('hello'), big]) {
-      client.send(m);
-      expect(await client.receive(), m.reversed.toList());
-    }
-    await client.close();
-    await served;
   });
 }
