@@ -12,9 +12,17 @@ import '../keys/keys.dart';
 /// Sends records without Nagle delay, and keeps write-side errors (a reset
 /// by the peer) from escaping as uncaught errors: the read side reports
 /// them as [PQSecureStreamException]s.
-void _prepare(Socket socket) {
-  socket.setOption(SocketOption.tcpNoDelay, true);
+///
+/// Returns `false` (and destroys the socket) if the peer is already gone.
+bool _prepare(Socket socket) {
   socket.done.ignore();
+  try {
+    socket.setOption(SocketOption.tcpNoDelay, true);
+    return true;
+  } on SocketException {
+    socket.destroy();
+    return false;
+  }
 }
 
 /// Client side of a [PQSecureChannel] over TCP.
@@ -23,8 +31,8 @@ void _prepare(Socket socket) {
 /// `SecureSocket`.
 abstract final class PQSecureSocket {
   /// Opens a TCP connection to [host]:[port] and runs the client handshake
-  /// (see [PQSecureChannel.connect]). [connectTimeout] bounds the TCP connect;
-  /// `options.handshakeTimeout` bounds the handshake.
+  /// (see [PQSecureChannel.connect]). [connectTimeout] bounds the TCP
+  /// connect; `options.handshakeTimeout` bounds the handshake.
   ///
   /// Throws [PQSecureChannelException] if the handshake fails, and the
   /// `dart:io` [SocketException] if the connection cannot be opened.
@@ -40,7 +48,11 @@ abstract final class PQSecureSocket {
     Duration? connectTimeout,
   }) async {
     final socket = await Socket.connect(host, port, timeout: connectTimeout);
-    _prepare(socket);
+    if (!_prepare(socket)) {
+      throw const PQSecureChannelException(
+        'Connection closed by peer during the handshake',
+      );
+    }
     return PQSecureChannel.connect(
       socket,
       socket,
@@ -65,17 +77,36 @@ final class PQSecureServer {
   final ServerSocket _socket;
   final StreamController<PQSecureChannel> _channels;
   final int _maxPendingHandshakes;
+  final int _maxIdleConnections;
+
+  /// Connections that have not sent a ClientHello yet.
+  int _idle = 0;
+
+  /// Handshakes past the ClientHello: the ones that cost signing work.
   int _pending = 0;
 
-  PQSecureServer._(this._socket, this._channels, this._maxPendingHandshakes);
+  PQSecureServer._(
+    this._socket,
+    this._channels,
+    this._maxPendingHandshakes,
+    this._maxIdleConnections,
+  );
 
   /// Binds to [address]:[port] (port 0 picks a free port) and starts
   /// accepting connections.
   ///
-  /// [maxPendingHandshakes] caps the handshakes in progress at once; more
-  /// connections are closed immediately, so a flood of half-open connections
-  /// cannot make the server sign without limit. The other parameters are
-  /// those of [PQSecureChannel.accept].
+  /// Two limits keep a flood of connections from exhausting the server:
+  ///
+  /// - [maxIdleConnections] caps connections that have not yet sent a
+  ///   ClientHello. Each is dropped after `options.helloTimeout`, and
+  ///   connections over the cap are closed at once. Idle connections cost
+  ///   only a socket.
+  /// - [maxPendingHandshakes] caps handshakes past the ClientHello, the
+  ///   point where the server starts signing. A ClientHello over the cap is
+  ///   refused as busy.
+  ///
+  /// [onHandshakeError] receives every refused handshake; an error it throws
+  /// is ignored. The other parameters are those of [PQSecureChannel.accept].
   static Future<PQSecureServer> bind(
     Object address,
     int port, {
@@ -86,11 +117,14 @@ final class PQSecureServer {
     PQSecureChannelOptions options = const PQSecureChannelOptions(),
     void Function(PQSecureChannelException error)? onHandshakeError,
     int maxPendingHandshakes = 64,
+    int maxIdleConnections = 1024,
     int backlog = 0,
     bool shared = false,
   }) async {
-    if (maxPendingHandshakes < 1) {
-      throw const InvalidInputException('maxPendingHandshakes must be >= 1');
+    if (maxPendingHandshakes < 1 || maxIdleConnections < 1) {
+      throw const InvalidInputException(
+        'maxPendingHandshakes and maxIdleConnections must be >= 1',
+      );
     }
     final e = engine ?? PostQuantumCryptoEngine();
     final socket = await ServerSocket.bind(
@@ -100,7 +134,12 @@ final class PQSecureServer {
       shared: shared,
     );
     final channels = StreamController<PQSecureChannel>();
-    final server = PQSecureServer._(socket, channels, maxPendingHandshakes);
+    final server = PQSecureServer._(
+      socket,
+      channels,
+      maxPendingHandshakes,
+      maxIdleConnections,
+    );
     socket.listen(
       (client) => server._handshake(
         client,
@@ -142,13 +181,14 @@ final class PQSecureServer {
     required PQSecureChannelOptions options,
     required void Function(PQSecureChannelException)? onHandshakeError,
   }) {
-    if (_pending >= _maxPendingHandshakes) {
+    if (_idle >= _maxIdleConnections) {
       socket.destroy();
       return;
     }
-    _pending++;
-    _prepare(socket);
-    PQSecureChannel.accept(
+    if (!_prepare(socket)) return;
+    _idle++;
+    var helloSeen = false;
+    PQSecureChannel.acceptInternal(
           socket,
           socket,
           identity: identity,
@@ -157,6 +197,13 @@ final class PQSecureServer {
           engine: engine,
           options: options,
           destroy: socket.destroy,
+          onHello: () {
+            if (_pending >= _maxPendingHandshakes) return false;
+            helloSeen = true;
+            _idle--;
+            _pending++;
+            return true;
+          },
         )
         .then(
           (channel) {
@@ -167,9 +214,22 @@ final class PQSecureServer {
             }
           },
           onError: (Object e) {
-            if (e is PQSecureChannelException) onHandshakeError?.call(e);
+            if (e is! PQSecureChannelException || onHandshakeError == null) {
+              return;
+            }
+            try {
+              onHandshakeError(e);
+            } catch (_) {
+              // A failing error callback must not take the server down.
+            }
           },
         )
-        .whenComplete(() => _pending--);
+        .whenComplete(() {
+          if (helloSeen) {
+            _pending--;
+          } else {
+            _idle--;
+          }
+        });
   }
 }

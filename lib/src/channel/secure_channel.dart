@@ -26,8 +26,10 @@
 ///   ML-KEM-768 or X25519 holds.
 /// - **Optional client authentication.** When the server asks for it (a
 ///   signed flag), the client signs the hello transcript and the key exchange
-///   with its own identity key. It sends that signature inside an encrypted
-///   record, so a passive observer does not learn who the client is.
+///   with its own identity key. Its public key and signature travel inside
+///   an encrypted record, so a passive observer does not see which key
+///   connected. The `clientId` label is sent in the clear in the
+///   ClientHello: don't put anything private in it.
 /// - **Records.** `establishHybridKey` derives 64 bytes, bound to both ids
 ///   and a SHA-384 of the hello transcript. They key the two directions,
 ///   each a secure stream (see `PQSecureStream`) with numbered records and an
@@ -38,6 +40,8 @@ library;
 
 import 'dart:async';
 import 'dart:typed_data';
+
+import 'package:meta/meta.dart';
 
 import '../algorithms/algorithms.dart';
 import '../context.dart';
@@ -63,17 +67,29 @@ final class PQSecureChannelOptions extends PQSecureStreamOptions {
   /// The longest a handshake may take.
   final Duration handshakeTimeout;
 
+  /// On the server, the longest it waits for the ClientHello. A connection
+  /// that sends nothing is dropped after this, well before
+  /// [handshakeTimeout].
+  final Duration helloTimeout;
+
   const PQSecureChannelOptions({
     super.protocol = 'post_quantum_crypto/secure-channel',
     super.aead,
     super.receiveTimeout,
     super.maxMessageLength,
     this.handshakeTimeout = const Duration(seconds: 30),
+    this.helloTimeout = const Duration(seconds: 10),
   });
 }
 
 /// An authenticated, encrypted, two-way message channel over any byte
 /// stream: a socket, a WebSocket, a pair of stream controllers.
+///
+/// [close] is a half-close: it ends this side's direction and lets the peer
+/// keep sending. That needs a transport whose sink can close without ending
+/// its input, such as TCP or a pair of pipes. On a transport where closing
+/// the sink ends both directions (a WebSocket), read until [receive] returns
+/// `null` before calling [close], or the peer's last messages are lost.
 ///
 /// Create one with [connect] (the client) or [accept] (the server). Each
 /// direction is a secure stream: [output] for what this side sends, [input]
@@ -135,17 +151,13 @@ final class PQSecureChannel {
        _peerKey = peerKey,
        output = PQSecureStreamWriter.internal(
          ctx.aead(aead),
-         Uint8List.fromList(
-           isClient ? sessionKey.sublist(0, 32) : sessionKey.sublist(32),
-         ),
+         _half(sessionKey, first: isClient),
          sink,
          destroy,
        ),
        input = PQSecureStreamReader.internal(
          ctx.aead(aead),
-         Uint8List.fromList(
-           isClient ? sessionKey.sublist(32) : sessionKey.sublist(0, 32),
-         ),
+         _half(sessionKey, first: !isClient),
          frames,
          options,
          destroy: destroy,
@@ -153,6 +165,15 @@ final class PQSecureChannel {
        ) {
     zeroize(sessionKey);
   }
+
+  /// One 32-byte half of [key], copied once (no intermediate copy is left
+  /// unwiped).
+  static Uint8List _half(Uint8List key, {required bool first}) =>
+      Uint8List.fromList(
+        first
+            ? Uint8List.sublistView(key, 0, 32)
+            : Uint8List.sublistView(key, 32, 64),
+      );
 
   /// The peer's authenticated identity key: the server's key on the client,
   /// and the client's key on a server that asked for client authentication
@@ -185,7 +206,7 @@ final class PQSecureChannel {
   }) {
     final e = engine ?? PostQuantumCryptoEngine();
     final frames = FrameReader(input);
-    return _handshake(frames, output, destroy, options, () async {
+    return _handshake(frames, output, destroy, options, (h) async {
       final ctx = e.ctx;
       ctx.policy.checkAead(options.aead);
       final hello =
@@ -199,8 +220,10 @@ final class PQSecureChannel {
               .toBytes();
       writeFrame(output, hello);
 
+      final serverHello = await frames.require();
+      h.check();
       final (flags, serverNonce, ephemeralBytes, signature) = _parse(
-        await frames.require(),
+        serverHello,
         (r) {
           _expectType(r, _serverHello);
           final flags = r.u8();
@@ -261,7 +284,7 @@ final class PQSecureChannel {
         peerId: serverId,
         peerKey: serverKey,
       );
-      return channel._confirm(() async {
+      return channel._confirm(h, () async {
         if (authRequired) {
           final id = clientIdentity!;
           final proof = e.sign(
@@ -302,12 +325,42 @@ final class PQSecureChannel {
     PostQuantumCryptoEngine? engine,
     PQSecureChannelOptions options = const PQSecureChannelOptions(),
     void Function()? destroy,
+  }) => acceptInternal(
+    input,
+    output,
+    identity: identity,
+    serverId: serverId,
+    authorizeClient: authorizeClient,
+    engine: engine,
+    options: options,
+    destroy: destroy,
+  );
+
+  /// [accept], calling [onHello] once a well-formed ClientHello has arrived:
+  /// the point from which the handshake costs the server real work. If it
+  /// returns `false`, the handshake is refused as busy.
+  @internal
+  static Future<PQSecureChannel> acceptInternal(
+    Stream<List<int>> input,
+    StreamSink<List<int>> output, {
+    required SigningKeyPair identity,
+    required String serverId,
+    ClientAuthorizer? authorizeClient,
+    PostQuantumCryptoEngine? engine,
+    PQSecureChannelOptions options = const PQSecureChannelOptions(),
+    void Function()? destroy,
+    bool Function()? onHello,
   }) {
     final e = engine ?? PostQuantumCryptoEngine();
     final frames = FrameReader(input);
-    return _handshake(frames, output, destroy, options, () async {
+    return _handshake(frames, output, destroy, options, (h) async {
       final ctx = e.ctx;
-      final hello = await frames.require();
+      final hello = await frames.require().timeout(
+        options.helloTimeout,
+        onTimeout: () =>
+            throw const PQSecureChannelException('ClientHello timed out'),
+      );
+      h.check();
       final (aead, protocol, clientId) = _parse(hello, (r) {
         _expectType(r, _clientHello);
         if (r.u8() != wireVersion) {
@@ -324,6 +377,9 @@ final class PQSecureChannel {
         throw const PQSecureChannelException('Application protocol mismatch');
       }
       ctx.policy.checkAead(aead);
+      if (onHello != null && !onHello()) {
+        throw const PQSecureChannelException('Server busy');
+      }
       final flags = authorizeClient == null ? 0 : _flagClientAuth;
 
       // A key pair for this connection only: forward secrecy.
@@ -356,6 +412,7 @@ final class PQSecureChannel {
         );
 
         final keyExchange = await frames.require();
+        h.check();
         final message = _parse(keyExchange, (r) {
           _expectType(r, _keyExchange);
           return r.fixed(r.remaining);
@@ -377,9 +434,10 @@ final class PQSecureChannel {
           isClient: false,
           peerId: clientId,
         );
-        return await channel._confirm(() async {
+        return await channel._confirm(h, () async {
           if (authorizeClient != null) {
             await channel._authenticateClient(
+              h,
               e,
               authorizeClient,
               clientId,
@@ -387,6 +445,7 @@ final class PQSecureChannel {
             );
           }
           await channel._expectFinished();
+          h.check();
           channel.output.writeRecord(RecordType.finished, Uint8List(0));
         });
       } finally {
@@ -453,16 +512,22 @@ final class PQSecureChannel {
 
   /// Runs [body] within the handshake timeout. On any failure it tears the
   /// connection down and rethrows as [PQSecureChannelException].
+  ///
+  /// [body] must call [_HandshakeState.check] after every `await`: once the
+  /// handshake has timed out or failed, the abandoned body stops at its next
+  /// step instead of signing, authorizing or keying a channel nobody holds.
   static Future<PQSecureChannel> _handshake(
     FrameReader frames,
     StreamSink<List<int>> output,
     void Function()? destroy,
     PQSecureChannelOptions options,
-    Future<PQSecureChannel> Function() body,
+    Future<PQSecureChannel> Function(_HandshakeState h) body,
   ) async {
+    final state = _HandshakeState();
     try {
-      return await body().timeout(options.handshakeTimeout);
+      return await body(state).timeout(options.handshakeTimeout);
     } catch (e) {
+      state.abandoned = true;
       await teardown(frames, output, destroy);
       throw switch (e) {
         PQSecureChannelException() => e,
@@ -483,10 +548,16 @@ final class PQSecureChannel {
     }
   }
 
-  /// Finishes the handshake with [steps], wiping the keys if they fail.
-  Future<PQSecureChannel> _confirm(Future<void> Function() steps) async {
+  /// Finishes the handshake with [steps], wiping the keys if they fail or the
+  /// handshake was abandoned meanwhile.
+  Future<PQSecureChannel> _confirm(
+    _HandshakeState h,
+    Future<void> Function() steps,
+  ) async {
     try {
+      h.check();
       await steps();
+      h.check();
       return this;
     } catch (_) {
       await abort();
@@ -495,12 +566,14 @@ final class PQSecureChannel {
   }
 
   Future<void> _authenticateClient(
+    _HandshakeState h,
     PostQuantumCryptoEngine engine,
     ClientAuthorizer authorize,
     String clientId,
     Uint8List signedMessage,
   ) async {
     final (type, payload) = await input.readRecord();
+    h.check();
     if (type != RecordType.clientAuth) {
       throw const PQSecureChannelException('Client authentication required');
     }
@@ -528,6 +601,8 @@ final class PQSecureChannel {
     } catch (_) {
       allowed = false;
     }
+    // A slow authorizer may outlast the handshake timeout.
+    h.check();
     if (!allowed) {
       throw const PQSecureChannelException('Client is not authorized');
     }
@@ -578,13 +653,8 @@ final class PQSecureChannel {
     extra: {'hello-sha384': TextEncoding.toHex(ctx.sha384(helloTranscript))},
   );
 
-  static T _parse<T>(Uint8List data, T Function(ByteReader r) parse) {
-    try {
-      return parseStrict(() => parse(ByteReader(data)));
-    } on MalformedDataException {
-      _malformed();
-    }
-  }
+  static T _parse<T>(Uint8List data, T Function(ByteReader r) parse) =>
+      parseStreamMessage(data, parse, malformed: _malformed);
 
   static void _expectType(ByteReader r, int type) {
     if (r.u8() != type) _malformed();
@@ -592,4 +662,16 @@ final class PQSecureChannel {
 
   static Never _malformed() =>
       throw const PQSecureChannelException('Malformed handshake message');
+}
+
+/// Whether a handshake has been given up (timed out or failed), so that its
+/// still-running body stops at the next step.
+final class _HandshakeState {
+  bool abandoned = false;
+
+  void check() {
+    if (abandoned) {
+      throw const PQSecureChannelException('Handshake abandoned');
+    }
+  }
 }

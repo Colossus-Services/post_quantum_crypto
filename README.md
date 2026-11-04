@@ -259,8 +259,13 @@ protocols, not TLS.
 stream: a file, a socket, a pipe, a queue.
 - Messages are numbered AEAD records. They keep their boundaries and are
   written as soon as they are added.
-- Tampering, replay, reordering, dropped records and truncation are all
-  detected: the stream ends with an authenticated End record.
+- Within a stream, tampering, replayed or reordered records, dropped
+  records and truncation are all detected: the stream ends with an
+  authenticated End record.
+- A one-way stream replayed whole (the same file or recording delivered
+  twice) still decrypts. If that matters, put a message id or timestamp in
+  your messages and reject repeats, or use a `PQSecureChannel`, whose keys
+  are fresh for each connection.
 
 ```dart
 // To a recipient's ML-KEM or X-Wing key; no round trip needed.
@@ -287,7 +292,9 @@ already share. Every stream gets a random salt, so the key can be reused.
   its identity key, which the client has pinned. This gives server
   authentication and forward secrecy, secure while either ML-KEM-768 or
   X25519 holds.
-- The server can require clients to authenticate with their own keys.
+- The server can require clients to authenticate with their own keys. The
+  key and its proof travel encrypted; the `clientId` label is sent in the
+  clear.
 - Each direction is a `PQSecureStream`.
 
 **`PQSecureServer` / `PQSecureSocket`** (`post_quantum_crypto_io`): the
@@ -368,6 +375,13 @@ including refused connections.
 
 `PQSecureChannel.connect` / `accept` run the same handshake over any
 `Stream<List<int>>` and `StreamSink<List<int>>`, for example a WebSocket.
+`close()` is a half-close. Where closing the sink ends both directions (a
+WebSocket), read until `receive()` returns `null` before closing.
+
+`PQSecureServer` drops connections that send no ClientHello within
+`helloTimeout`. It caps idle connections (`maxIdleConnections`) and
+handshakes in progress (`maxPendingHandshakes`) separately, so idle sockets
+cannot crowd out real clients.
 
 ## Keys
 

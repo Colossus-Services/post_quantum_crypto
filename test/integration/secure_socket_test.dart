@@ -29,7 +29,10 @@ void main() {
   Future<PQSecureServer> echoServer({
     ClientAuthorizer? authorizeClient,
     List<PQSecureChannelException>? errors,
+    void Function(PQSecureChannelException)? onHandshakeError,
     int maxPendingHandshakes = 64,
+    int maxIdleConnections = 1024,
+    PQSecureChannelOptions serverOptions = options,
   }) async {
     final server = await PQSecureServer.bind(
       InternetAddress.loopbackIPv4,
@@ -38,9 +41,10 @@ void main() {
       serverId: serverId,
       authorizeClient: authorizeClient,
       engine: engine,
-      options: options,
-      onHandshakeError: errors?.add,
+      options: serverOptions,
+      onHandshakeError: onHandshakeError ?? errors?.add,
       maxPendingHandshakes: maxPendingHandshakes,
+      maxIdleConnections: maxIdleConnections,
     );
     addTearDown(server.close);
     server.channels.listen((channel) async {
@@ -150,35 +154,116 @@ void main() {
     );
   });
 
-  test('connections over maxPendingHandshakes are dropped', () async {
+  test('idle connections do not take handshake slots', () async {
+    final server = await echoServer(maxPendingHandshakes: 1);
+    // Sockets that never send a ClientHello...
+    final idle = [
+      for (var i = 0; i < 3; i++)
+        await Socket.connect(server.address, server.port),
+    ];
+    addTearDown(() {
+      for (final s in idle) {
+        s.destroy();
+      }
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    // ...leave the only handshake slot to a real client.
+    final channel = await connect(server);
+    channel.send([1]);
+    expect(await channel.receive(), [1]);
+    await channel.close();
+  });
+
+  test('handshakes over maxPendingHandshakes are refused as busy', () async {
     final errors = <PQSecureChannelException>[];
-    final server = await echoServer(errors: errors, maxPendingHandshakes: 1);
-    // A raw socket that never sends a ClientHello holds the only slot.
+    final release = Completer<void>();
+    final server = await echoServer(
+      errors: errors,
+      maxPendingHandshakes: 1,
+      // The first client's authorization blocks, holding the only slot.
+      authorizeClient: (_, _) async {
+        await release.future;
+        return true;
+      },
+    );
+    final first = connect(server, clientIdentity: alice);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await expectLater(
+      connect(server, clientIdentity: alice),
+      throwsA(isA<PQSecureChannelException>()),
+    );
+    release.complete();
+    await (await first).close();
+    expect(errors.map((e) => e.message), contains('Server busy'));
+  });
+
+  test('connections over maxIdleConnections are closed at once', () async {
+    final server = await echoServer(maxIdleConnections: 1);
     final idle = await Socket.connect(server.address, server.port);
     addTearDown(idle.destroy);
     await Future<void>.delayed(const Duration(milliseconds: 100));
+    // The idle slot is taken, so this connection is dropped before any
+    // handshake.
     await expectLater(
       connect(server),
       throwsA(isA<PQSecureChannelException>()),
     );
-    idle.destroy();
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    // With the slot free again, a client gets through.
+  });
+
+  test('a connection that sends no ClientHello is dropped', () async {
+    final errors = <PQSecureChannelException>[];
+    final server = await echoServer(
+      errors: errors,
+      maxIdleConnections: 1,
+      serverOptions: const PQSecureChannelOptions(
+        protocol: 'test/echo/v1',
+        helloTimeout: Duration(milliseconds: 200),
+      ),
+    );
+    final idle = await Socket.connect(server.address, server.port);
+    addTearDown(idle.destroy);
+    // The server hangs up on the silent socket...
+    await idle.drain<void>().timeout(const Duration(seconds: 5));
+    expect(errors.single.message, contains('ClientHello timed out'));
+    // ...which frees its idle slot for a real client.
     final channel = await connect(server);
     await channel.close();
   });
 
-  test('maxPendingHandshakes must be positive', () async {
-    await expectLater(
-      PQSecureServer.bind(
-        InternetAddress.loopbackIPv4,
-        0,
-        identity: identity,
-        serverId: serverId,
-        maxPendingHandshakes: 0,
-      ),
-      throwsA(isA<InvalidInputException>()),
+  test('a throwing onHandshakeError does not stop the server', () async {
+    var calls = 0;
+    final server = await echoServer(
+      onHandshakeError: (_) {
+        calls++;
+        throw StateError('log sink closed');
+      },
     );
+    await expectLater(
+      connect(server, serverKey: engine.generateSigningKeyPair().publicKey),
+      throwsA(isA<PQSecureChannelException>()),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(calls, 1);
+    final channel = await connect(server);
+    channel.send([2]);
+    expect(await channel.receive(), [2]);
+    await channel.close();
+  });
+
+  test('the connection limits must be positive', () async {
+    for (final (pending, idle) in [(0, 1), (1, 0)]) {
+      await expectLater(
+        PQSecureServer.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+          identity: identity,
+          serverId: serverId,
+          maxPendingHandshakes: pending,
+          maxIdleConnections: idle,
+        ),
+        throwsA(isA<InvalidInputException>()),
+      );
+    }
   });
 
   test('closing the server stops accepting', () async {

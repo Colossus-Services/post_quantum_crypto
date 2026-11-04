@@ -475,6 +475,37 @@ void main() {
       );
     });
 
+    test('a handshake abandoned on timeout stops at its next step', () async {
+      final w = Wire();
+      var authorizerDone = false;
+      final server = PQSecureChannel.accept(
+        w.toServer.stream,
+        w.serverOut,
+        identity: identity,
+        serverId: serverId,
+        engine: engine,
+        options: const PQSecureChannelOptions(
+          protocol: 'test/v1',
+          handshakeTimeout: Duration(milliseconds: 300),
+        ),
+        // Outlasts the timeout, then allows the client.
+        authorizeClient: (_, _) async {
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          authorizerDone = true;
+          return true;
+        },
+      );
+      final client = startClient(w, clientIdentity: clientKey);
+      await Future.wait([
+        expectLater(server, handshakeError('timed out')),
+        expectLater(client, handshakeError()),
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(authorizerDone, isTrue);
+      // The late approval wrote nothing: only the ServerHello went out.
+      expect(w.serverFrames, hasLength(1));
+    });
+
     test('a stripped client-auth flag fails the server signature', () async {
       await expectHandshakeFails(
         Wire(fromServer: (i, f) => i == 0 ? flipAt(f, serverFlagsAt) : [f]),

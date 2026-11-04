@@ -36,6 +36,13 @@
 /// - Mode 2 is from a key both ends already share. The random salt gives
 ///   every stream a fresh key, so the shared key may be reused.
 ///
+/// Replay protection works within a stream. A one-way stream recorded whole
+/// can be delivered again, and it decrypts as before, because nothing ties a
+/// header to the moment it is read. When that matters, the application must
+/// reject it: include a message id or timestamp and remember what it has
+/// seen, or use a `PQSecureChannel`, whose keys are fresh for each
+/// connection.
+///
 /// A `PQSecureChannel` uses two secure streams, one per direction, keyed by
 /// its handshake instead of a header.
 ///
@@ -106,7 +113,7 @@ abstract final class PQSecureStream {
   static const _modeSharedKey = 2;
   static const _saltLength = 32;
   static const _minSharedKeyLength = 32;
-  static final _keyLabel = utf8Bytes('post_quantum_crypto/v1/secure-stream');
+  static final _keyLabel = streamLabel;
 
   /// Starts a stream to [recipient] (ML-KEM or X-Wing) on [output]. Only the
   /// holder of the matching private key can read it.
@@ -339,12 +346,11 @@ abstract final class RecordType {
   /// A fragment with more of the same message to follow.
   static const dataMore = 0x18;
 
-  static final _label = utf8Bytes('post_quantum_crypto/v1/secure-stream');
   static final Map<int, Uint8List> aads = {
     for (final t in [finished, end, clientAuth, data, dataMore])
       t:
           (ByteWriter()
-                ..raw(_label)
+                ..raw(streamLabel)
                 ..u8(t))
               .toBytes(),
   };
@@ -383,11 +389,20 @@ final class PQSecureStreamWriter {
   /// Writes [message], split into records of at most
   /// [PQSecureStream.maxRecordPayload] bytes.
   ///
-  /// Throws [StateError] after [close] or [abort], and once
-  /// [PQSecureStream.maxRecords] records have been written.
+  /// Throws [StateError] after [close] or [abort], or if [message] does not
+  /// fit in the records left before [PQSecureStream.maxRecords]. Nothing is
+  /// written in that case, and [close] still ends the stream cleanly (the
+  /// last record is kept for End).
   void add(List<int> message) {
     if (!isOpen) throw StateError('Stream is closed');
     final bytes = message is Uint8List ? message : Uint8List.fromList(message);
+    final records = bytes.isEmpty
+        ? 1
+        : (bytes.length + PQSecureStream.maxRecordPayload - 1) ~/
+              PQSecureStream.maxRecordPayload;
+    if (_seq + records > PQSecureStream.maxRecords - 1) {
+      throw StateError('Record limit reached; start a new stream');
+    }
     var offset = 0;
     do {
       final end = bytes.length - offset > PQSecureStream.maxRecordPayload
@@ -440,10 +455,13 @@ final class PQSecureStreamWriter {
     if (!_closed) await teardown(null, _output, _destroy);
   }
 
-  /// Writes one record of [type].
+  /// Writes one record of [type]. The last record number is kept for End.
   @internal
   void writeRecord(int type, Uint8List payload) {
-    if (_seq >= PQSecureStream.maxRecords) {
+    final limit = type == RecordType.end
+        ? PQSecureStream.maxRecords
+        : PQSecureStream.maxRecords - 1;
+    if (_seq >= limit) {
       throw StateError('Record limit reached; start a new stream');
     }
     final sealed = _cipher.seal(
@@ -601,14 +619,26 @@ final class PQSecureStreamReader {
 
 /// Parses a header or handshake message strictly; any structural problem is
 /// a [PQSecureStreamException] (or the more specific error thrown by [parse]).
+///
+/// [malformed] throws the error for a structural problem; it defaults to
+/// [malformedStream].
 @internal
-T parseStreamMessage<T>(Uint8List data, T Function(ByteReader r) parse) {
+T parseStreamMessage<T>(
+  Uint8List data,
+  T Function(ByteReader r) parse, {
+  Never Function() malformed = malformedStream,
+}) {
   try {
     return parseStrict(() => parse(ByteReader(data)));
   } on MalformedDataException {
-    malformedStream();
+    malformed();
   }
 }
+
+/// The domain label of the secure stream: the HKDF label of one-way stream
+/// keys and the prefix of every record's AAD.
+@internal
+final Uint8List streamLabel = utf8Bytes('post_quantum_crypto/v1/secure-stream');
 
 @internal
 Never malformedStream() =>
