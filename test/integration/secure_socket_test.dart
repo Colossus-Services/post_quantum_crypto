@@ -13,7 +13,7 @@ import 'package:test/test.dart';
 import '../support/test_engine.dart';
 
 const serverId = 'echo.test';
-const options = SecureChannelOptions(protocol: 'test/echo/v1');
+const options = PQSecureChannelOptions(protocol: 'test/echo/v1');
 
 void main() {
   late SigningKeyPair identity;
@@ -28,7 +28,7 @@ void main() {
   /// the test. Handshake errors are collected in [errors].
   Future<PQSecureServer> echoServer({
     ClientAuthorizer? authorizeClient,
-    List<SecureChannelException>? errors,
+    List<PQSecureChannelException>? errors,
     int maxPendingHandshakes = 64,
   }) async {
     final server = await PQSecureServer.bind(
@@ -49,14 +49,14 @@ void main() {
           channel.send(m.reversed.toList());
         }
         await channel.close();
-      } on SecureStreamException {
+      } on PQSecureStreamException {
         await channel.abort();
       }
     });
     return server;
   }
 
-  Future<SecureChannel> connect(
+  Future<PQSecureChannel> connect(
     PQSecureServer server, {
     SigningKeyPair? clientIdentity,
     SigningPublicKey? serverKey,
@@ -100,7 +100,7 @@ void main() {
 
   test('client authentication with an authorizer', () async {
     final seen = <String>[];
-    final errors = <SecureChannelException>[];
+    final errors = <PQSecureChannelException>[];
     final server = await echoServer(
       errors: errors,
       authorizeClient: (key, id) {
@@ -115,12 +115,12 @@ void main() {
 
     await expectLater(
       connect(server, clientIdentity: engine.generateSigningKeyPair()),
-      throwsA(isA<SecureChannelException>()),
+      throwsA(isA<PQSecureChannelException>()),
     );
     await expectLater(
       connect(server),
       throwsA(
-        isA<SecureChannelException>().having(
+        isA<PQSecureChannelException>().having(
           (e) => e.message,
           'message',
           contains('requires client authentication'),
@@ -141,7 +141,7 @@ void main() {
     await expectLater(
       connect(server, serverKey: engine.generateSigningKeyPair().publicKey),
       throwsA(
-        isA<SecureChannelException>().having(
+        isA<PQSecureChannelException>().having(
           (e) => e.message,
           'message',
           contains('Server identity could not be verified'),
@@ -151,13 +151,16 @@ void main() {
   });
 
   test('connections over maxPendingHandshakes are dropped', () async {
-    final errors = <SecureChannelException>[];
+    final errors = <PQSecureChannelException>[];
     final server = await echoServer(errors: errors, maxPendingHandshakes: 1);
     // A raw socket that never sends a ClientHello holds the only slot.
     final idle = await Socket.connect(server.address, server.port);
     addTearDown(idle.destroy);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    await expectLater(connect(server), throwsA(isA<SecureChannelException>()));
+    await expectLater(
+      connect(server),
+      throwsA(isA<PQSecureChannelException>()),
+    );
     idle.destroy();
     await Future<void>.delayed(const Duration(milliseconds: 100));
     // With the slot free again, a client gets through.
@@ -194,7 +197,7 @@ void main() {
     );
   });
 
-  group('SecureStream over files', () {
+  group('PQSecureStream over files', () {
     late Directory dir;
     setUp(() async {
       dir = await Directory.systemTemp.createTemp('pqc_secure_stream');
@@ -204,7 +207,7 @@ void main() {
     test('a file written to a recipient reads back', () async {
       final recipient = engine.generateEncryptionKeyPair();
       final file = File('${dir.path}/log.pqs');
-      final writer = SecureStream.encryptTo(
+      final writer = PQSecureStream.encryptTo(
         file.openWrite(),
         recipient: recipient.publicKey,
         engine: engine,
@@ -215,7 +218,7 @@ void main() {
       writer.add(Uint8List(50000));
       await writer.close();
 
-      final reader = await SecureStream.decryptFrom(
+      final reader = await PQSecureStream.decryptFrom(
         file.openRead(),
         privateKey: recipient.privateKey,
         engine: engine,
@@ -229,7 +232,7 @@ void main() {
     test('a file cut short is reported as truncated', () async {
       final recipient = engine.generateEncryptionKeyPair();
       final file = File('${dir.path}/cut.pqs');
-      final writer = SecureStream.encryptTo(
+      final writer = PQSecureStream.encryptTo(
         file.openWrite(),
         recipient: recipient.publicKey,
         engine: engine,
@@ -239,7 +242,7 @@ void main() {
       // Remove the End record (u32 length + type + 16-byte tag).
       await file.writeAsBytes(bytes.sublist(0, bytes.length - 21));
 
-      final reader = await SecureStream.decryptFrom(
+      final reader = await PQSecureStream.decryptFrom(
         file.openRead(),
         privateKey: recipient.privateKey,
         engine: engine,
@@ -248,7 +251,7 @@ void main() {
       await expectLater(
         reader.read(),
         throwsA(
-          isA<SecureStreamException>().having(
+          isA<PQSecureStreamException>().having(
             (e) => e.message,
             'message',
             contains('truncated'),

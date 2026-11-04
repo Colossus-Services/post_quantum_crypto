@@ -256,7 +256,7 @@ void main() {
     test('a secure stream round-trips through a pipe', () async {
       final recipient = engine.generateEncryptionKeyPair();
       final pipe = StreamController<List<int>>();
-      final writer = SecureStream.encryptTo(
+      final writer = PQSecureStream.encryptTo(
         pipe.sink,
         recipient: recipient.publicKey,
         engine: engine,
@@ -266,7 +266,7 @@ void main() {
         ..add([1, 2, 3])
         ..add(big);
       final closing = writer.close();
-      final reader = await SecureStream.decryptFrom(
+      final reader = await PQSecureStream.decryptFrom(
         pipe.stream,
         privateKey: recipient.privateKey,
         engine: engine,
@@ -282,14 +282,14 @@ void main() {
       final identity = engine.generateSigningKeyPair();
       final toServer = StreamController<List<int>>();
       final toClient = StreamController<List<int>>();
-      final server = SecureChannel.accept(
+      final server = PQSecureChannel.accept(
         toServer.stream,
         toClient.sink,
         identity: identity,
         serverId: 'server',
         engine: engine,
       );
-      final client = await SecureChannel.connect(
+      final client = await PQSecureChannel.connect(
         toClient.stream,
         toServer.sink,
         serverKey: identity.publicKey,

@@ -1,4 +1,4 @@
-/// [SecureChannel] over TCP sockets.
+/// [PQSecureChannel] over TCP sockets.
 library;
 
 import 'dart:async';
@@ -11,24 +11,24 @@ import '../keys/keys.dart';
 
 /// Sends records without Nagle delay, and keeps write-side errors (a reset
 /// by the peer) from escaping as uncaught errors: the read side reports
-/// them as [SecureStreamException]s.
+/// them as [PQSecureStreamException]s.
 void _prepare(Socket socket) {
   socket.setOption(SocketOption.tcpNoDelay, true);
   socket.done.ignore();
 }
 
-/// Client side of a [SecureChannel] over TCP.
+/// Client side of a [PQSecureChannel] over TCP.
 ///
 /// Named `PQSecureSocket` so it does not clash with `dart:io`'s TLS
 /// `SecureSocket`.
 abstract final class PQSecureSocket {
   /// Opens a TCP connection to [host]:[port] and runs the client handshake
-  /// (see [SecureChannel.connect]). [connectTimeout] bounds the TCP connect;
+  /// (see [PQSecureChannel.connect]). [connectTimeout] bounds the TCP connect;
   /// `options.handshakeTimeout` bounds the handshake.
   ///
-  /// Throws [SecureChannelException] if the handshake fails, and the
+  /// Throws [PQSecureChannelException] if the handshake fails, and the
   /// `dart:io` [SocketException] if the connection cannot be opened.
-  static Future<SecureChannel> connect(
+  static Future<PQSecureChannel> connect(
     Object host,
     int port, {
     required SigningPublicKey serverKey,
@@ -36,12 +36,12 @@ abstract final class PQSecureSocket {
     String clientId = '',
     SigningKeyPair? clientIdentity,
     PostQuantumCryptoEngine? engine,
-    SecureChannelOptions options = const SecureChannelOptions(),
+    PQSecureChannelOptions options = const PQSecureChannelOptions(),
     Duration? connectTimeout,
   }) async {
     final socket = await Socket.connect(host, port, timeout: connectTimeout);
     _prepare(socket);
-    return SecureChannel.connect(
+    return PQSecureChannel.connect(
       socket,
       socket,
       serverKey: serverKey,
@@ -55,15 +55,15 @@ abstract final class PQSecureSocket {
   }
 }
 
-/// A TCP server whose connections are [SecureChannel]s.
+/// A TCP server whose connections are [PQSecureChannel]s.
 ///
 /// Every accepted socket runs the server handshake (see
-/// [SecureChannel.accept]); the connections that complete it arrive on
+/// [PQSecureChannel.accept]); the connections that complete it arrive on
 /// [channels]. Failed handshakes are dropped and reported to
 /// `onHandshakeError`.
 final class PQSecureServer {
   final ServerSocket _socket;
-  final StreamController<SecureChannel> _channels;
+  final StreamController<PQSecureChannel> _channels;
   final int _maxPendingHandshakes;
   int _pending = 0;
 
@@ -75,7 +75,7 @@ final class PQSecureServer {
   /// [maxPendingHandshakes] caps the handshakes in progress at once; more
   /// connections are closed immediately, so a flood of half-open connections
   /// cannot make the server sign without limit. The other parameters are
-  /// those of [SecureChannel.accept].
+  /// those of [PQSecureChannel.accept].
   static Future<PQSecureServer> bind(
     Object address,
     int port, {
@@ -83,8 +83,8 @@ final class PQSecureServer {
     required String serverId,
     ClientAuthorizer? authorizeClient,
     PostQuantumCryptoEngine? engine,
-    SecureChannelOptions options = const SecureChannelOptions(),
-    void Function(SecureChannelException error)? onHandshakeError,
+    PQSecureChannelOptions options = const PQSecureChannelOptions(),
+    void Function(PQSecureChannelException error)? onHandshakeError,
     int maxPendingHandshakes = 64,
     int backlog = 0,
     bool shared = false,
@@ -99,7 +99,7 @@ final class PQSecureServer {
       backlog: backlog,
       shared: shared,
     );
-    final channels = StreamController<SecureChannel>();
+    final channels = StreamController<PQSecureChannel>();
     final server = PQSecureServer._(socket, channels, maxPendingHandshakes);
     socket.listen(
       (client) => server._handshake(
@@ -125,7 +125,7 @@ final class PQSecureServer {
 
   /// The established channels. Single subscription; cancelling it closes the
   /// server.
-  Stream<SecureChannel> get channels => _channels.stream;
+  Stream<PQSecureChannel> get channels => _channels.stream;
 
   /// Stops accepting connections. Channels already delivered stay open.
   Future<void> close() async {
@@ -139,8 +139,8 @@ final class PQSecureServer {
     required String serverId,
     required ClientAuthorizer? authorizeClient,
     required PostQuantumCryptoEngine engine,
-    required SecureChannelOptions options,
-    required void Function(SecureChannelException)? onHandshakeError,
+    required PQSecureChannelOptions options,
+    required void Function(PQSecureChannelException)? onHandshakeError,
   }) {
     if (_pending >= _maxPendingHandshakes) {
       socket.destroy();
@@ -148,7 +148,7 @@ final class PQSecureServer {
     }
     _pending++;
     _prepare(socket);
-    SecureChannel.accept(
+    PQSecureChannel.accept(
           socket,
           socket,
           identity: identity,
@@ -167,7 +167,7 @@ final class PQSecureServer {
             }
           },
           onError: (Object e) {
-            if (e is SecureChannelException) onHandshakeError?.call(e);
+            if (e is PQSecureChannelException) onHandshakeError?.call(e);
           },
         )
         .whenComplete(() => _pending--);

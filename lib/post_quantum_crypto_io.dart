@@ -6,7 +6,7 @@
 /// - `signFile` / `verifyFile`, `manifestEntryForFile` /
 ///   `verifyManifestFiles`.
 /// - [FileKeyStorage]: a directory-backed `KeyStorage`.
-/// - [PQSecureSocket] / [PQSecureServer]: `SecureChannel` over TCP.
+/// - [PQSecureSocket] / [PQSecureServer]: `PQSecureChannel` over TCP.
 library;
 
 export 'post_quantum_crypto.dart';

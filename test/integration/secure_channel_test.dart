@@ -55,17 +55,17 @@ final class Wire {
 
 const serverId = 'server-1';
 const clientId = 'client-7';
-const options = SecureChannelOptions(protocol: 'test/v1');
+const options = PQSecureChannelOptions(protocol: 'test/v1');
 
 late SigningKeyPair identity;
 late SigningKeyPair clientKey;
 
-Future<SecureChannel> startServer(
+Future<PQSecureChannel> startServer(
   Wire w, {
-  SecureChannelOptions options = options,
+  PQSecureChannelOptions options = options,
   ClientAuthorizer? authorizeClient,
   PostQuantumCryptoEngine? serverEngine,
-}) => SecureChannel.accept(
+}) => PQSecureChannel.accept(
   w.toServer.stream,
   w.serverOut,
   identity: identity,
@@ -75,13 +75,13 @@ Future<SecureChannel> startServer(
   options: options,
 );
 
-Future<SecureChannel> startClient(
+Future<PQSecureChannel> startClient(
   Wire w, {
   SigningPublicKey? pinned,
   String expectedServerId = serverId,
   SigningKeyPair? clientIdentity,
-  SecureChannelOptions options = options,
-}) => SecureChannel.connect(
+  PQSecureChannelOptions options = options,
+}) => PQSecureChannel.connect(
   w.toClient.stream,
   w.clientOut,
   serverKey: pinned ?? identity.publicKey,
@@ -93,10 +93,10 @@ Future<SecureChannel> startClient(
 );
 
 /// Runs a successful handshake over [w].
-Future<(SecureChannel, SecureChannel)> connect(
+Future<(PQSecureChannel, PQSecureChannel)> connect(
   Wire w, {
-  SecureChannelOptions clientOptions = options,
-  SecureChannelOptions serverOptions = options,
+  PQSecureChannelOptions clientOptions = options,
+  PQSecureChannelOptions serverOptions = options,
   ClientAuthorizer? authorizeClient,
   SigningKeyPair? clientIdentity,
 }) async {
@@ -115,16 +115,16 @@ Future<(SecureChannel, SecureChannel)> connect(
 
 /// An error on an established channel: one of its secure streams failed.
 Matcher channelError([String? message]) => throwsA(
-  isA<SecureStreamException>().having(
+  isA<PQSecureStreamException>().having(
     (e) => e.message,
     'message',
     message == null ? anything : contains(message),
   ),
 );
 
-/// A handshake error, always the more specific [SecureChannelException].
+/// A handshake error, always the more specific [PQSecureChannelException].
 Matcher handshakeError([String? message]) => throwsA(
-  isA<SecureChannelException>().having(
+  isA<PQSecureChannelException>().having(
     (e) => e.message,
     'message',
     message == null ? anything : contains(message),
@@ -139,8 +139,8 @@ Future<void> expectHandshakeFails(
   String expectedServerId = serverId,
   SigningKeyPair? clientIdentity,
   ClientAuthorizer? authorizeClient,
-  SecureChannelOptions clientOptions = options,
-  SecureChannelOptions serverOptions = options,
+  PQSecureChannelOptions clientOptions = options,
+  PQSecureChannelOptions serverOptions = options,
   PostQuantumCryptoEngine? serverEngine,
   String? client,
   String? server,
@@ -213,13 +213,13 @@ void main() {
 
     test('the default engine and options work', () async {
       final w = Wire();
-      final s = SecureChannel.accept(
+      final s = PQSecureChannel.accept(
         w.toServer.stream,
         w.serverOut,
         identity: identity,
         serverId: serverId,
       );
-      final c = SecureChannel.connect(
+      final c = PQSecureChannel.connect(
         w.toClient.stream,
         w.clientOut,
         serverKey: identity.publicKey,
@@ -252,7 +252,7 @@ void main() {
     });
 
     test('ChaCha20-Poly1305 is negotiated by the client', () async {
-      const chacha = SecureChannelOptions(
+      const chacha = PQSecureChannelOptions(
         protocol: 'test/v1',
         aead: AeadAlgorithm.chacha20Poly1305,
       );
@@ -268,7 +268,7 @@ void main() {
     test('an AEAD the server policy forbids is refused', () async {
       await expectHandshakeFails(
         Wire(),
-        clientOptions: const SecureChannelOptions(
+        clientOptions: const PQSecureChannelOptions(
           protocol: 'test/v1',
           aead: AeadAlgorithm.chacha20Poly1305,
         ),
@@ -285,7 +285,7 @@ void main() {
     test('a different application protocol is refused', () async {
       await expectHandshakeFails(
         Wire(),
-        clientOptions: const SecureChannelOptions(protocol: 'test/v2'),
+        clientOptions: const PQSecureChannelOptions(protocol: 'test/v2'),
         server: 'Application protocol mismatch',
         client: 'closed by peer',
       );
@@ -395,7 +395,7 @@ void main() {
       await expectLater(
         startClient(
           w,
-          options: const SecureChannelOptions(
+          options: const PQSecureChannelOptions(
             protocol: 'test/v1',
             handshakeTimeout: Duration(milliseconds: 200),
           ),
@@ -501,10 +501,10 @@ void main() {
       final sizes = [
         0,
         1,
-        SecureStream.maxRecordPayload - 1,
-        SecureStream.maxRecordPayload,
-        SecureStream.maxRecordPayload + 1,
-        3 * SecureStream.maxRecordPayload,
+        PQSecureStream.maxRecordPayload - 1,
+        PQSecureStream.maxRecordPayload,
+        PQSecureStream.maxRecordPayload + 1,
+        3 * PQSecureStream.maxRecordPayload,
         100000,
       ];
       for (final n in sizes) {
@@ -541,7 +541,7 @@ void main() {
       client.send(utf8.encode('one byte at a time'));
       expect(utf8.decode((await server.receive())!), 'one byte at a time');
       // A full-size record, one byte per chunk: buffering stays linear.
-      final full = Uint8List(SecureStream.maxRecordPayload);
+      final full = Uint8List(PQSecureStream.maxRecordPayload);
       client.send(full);
       expect(await server.receive(), full);
       await client.close();
@@ -700,7 +700,7 @@ void main() {
     });
 
     for (final (name, length) in [
-      ('oversized', SecureStream.maxFrameLength + 1),
+      ('oversized', PQSecureStream.maxFrameLength + 1),
       ('empty', 0),
     ]) {
       test('an $name frame is rejected before it is buffered', () async {
@@ -717,7 +717,7 @@ void main() {
     test('messages over the receiver limit are rejected', () async {
       final (client, server) = await connect(
         Wire(),
-        serverOptions: const SecureChannelOptions(
+        serverOptions: const PQSecureChannelOptions(
           protocol: 'test/v1',
           maxMessageLength: 40000,
         ),
@@ -735,7 +735,7 @@ void main() {
           // The first record stops after its length prefix.
           fromClient: (i, f) => i == 3 ? [f.sublist(0, 4)] : [f],
         ),
-        serverOptions: const SecureChannelOptions(
+        serverOptions: const PQSecureChannelOptions(
           protocol: 'test/v1',
           receiveTimeout: Duration(milliseconds: 200),
         ),

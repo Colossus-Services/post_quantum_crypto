@@ -4,7 +4,7 @@
 
 Three layers of protected messaging, each built on the one before.
 
-- **`SecureStream`: protected messages over any byte stream.** It works
+- **`PQSecureStream`: protected messages over any byte stream.** It works
   over a file, a socket, a pipe or a message queue, and runs in browsers.
   - One direction of messages as numbered AEAD records (AES-256-GCM or
     ChaCha20-Poly1305). Messages keep their boundaries and are sent as soon
@@ -19,10 +19,10 @@ Three layers of protected messaging, each built on the one before.
     X-Wing key, with no round trip (files, store-and-forward).
     `encryptWithKey` / `decryptWithKey` key it from a shared key, with a
     per-stream salt so the key can be reused.
-  - `SecureStreamWriter.close` reports an output that fails to close (a
+  - `PQSecureStreamWriter.close` reports an output that fails to close (a
     write error), so an incomplete file never looks complete.
-- **`SecureChannel`: an authenticated two-way channel over any byte
-  stream.** Each direction is a `SecureStream` (`channel.output` /
+- **`PQSecureChannel`: an authenticated two-way channel over any byte
+  stream.** Each direction is a `PQSecureStream` (`channel.output` /
   `channel.input`).
   - The server signs a fresh X-Wing key, generated for each connection,
     with its ML-DSA (or SLH-DSA) identity key, which the client has
@@ -38,13 +38,13 @@ Three layers of protected messaging, each built on the one before.
     has a timeout, and the ephemeral key is destroyed after it.
   - `close` is a half-close; `abort` drops the connection at once.
 - **`PQSecureSocket` / `PQSecureServer`** (`post_quantum_crypto_io`):
-  `SecureChannel` over TCP.
+  `PQSecureChannel` over TCP.
   - The server delivers established channels on `channels` and reports
     refused handshakes to `onHandshakeError`.
   - `maxPendingHandshakes` caps concurrent handshakes, so a flood of idle
     connections cannot make the server sign without limit.
-- **`SecureStreamException`** (stream and channel failures) and its
-  subclass **`SecureChannelException`** (handshake failures).
+- **`PQSecureStreamException`** (stream and channel failures) and its
+  subclass **`PQSecureChannelException`** (handshake failures).
 
 These are package-specific protocols, not TLS.
 
@@ -77,7 +77,7 @@ These are package-specific protocols, not TLS.
     half-close, abort.
 - `secure_socket_test.dart` covers TCP echo with several clients, client
   authorization, an unpinned server, `maxPendingHandshakes`, server close
-  and a `SecureStream` file round trip and truncation.
+  and a `PQSecureStream` file round trip and truncation.
 - `test/browser` runs a stream and a channel under dart2js and dart2wasm.
 
 ## 2.2.1

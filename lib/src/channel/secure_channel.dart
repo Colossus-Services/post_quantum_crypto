@@ -30,7 +30,7 @@
 ///   record, so a passive observer does not learn who the client is.
 /// - **Records.** `establishHybridKey` derives 64 bytes, bound to both ids
 ///   and a SHA-384 of the hello transcript. They key the two directions,
-///   each a secure stream (see `SecureStream`) with numbered records and an
+///   each a secure stream (see `PQSecureStream`) with numbered records and an
 ///   authenticated end.
 ///
 /// This is a package-specific protocol, not TLS.
@@ -57,13 +57,13 @@ import 'secure_stream.dart';
 typedef ClientAuthorizer =
     FutureOr<bool> Function(SigningPublicKey key, String clientId);
 
-/// Settings for a [SecureChannel]: those of its secure streams, plus the
+/// Settings for a [PQSecureChannel]: those of its secure streams, plus the
 /// handshake timeout. Both ends must use the same `protocol`.
-final class SecureChannelOptions extends SecureStreamOptions {
+final class PQSecureChannelOptions extends PQSecureStreamOptions {
   /// The longest a handshake may take.
   final Duration handshakeTimeout;
 
-  const SecureChannelOptions({
+  const PQSecureChannelOptions({
     super.protocol = 'post_quantum_crypto/secure-channel',
     super.aead,
     super.receiveTimeout,
@@ -82,7 +82,7 @@ final class SecureChannelOptions extends SecureStreamOptions {
 ///
 /// The handshake is CPU-bound (ML-DSA, X-Wing); in a UI isolate, run it in
 /// the background.
-final class SecureChannel {
+final class PQSecureChannel {
   /// The wire-format version.
   static const wireVersion = 1;
 
@@ -102,10 +102,10 @@ final class SecureChannel {
   static final _clientContext = utf8Bytes('$_labelText client');
 
   /// What this side sends.
-  final SecureStreamWriter output;
+  final PQSecureStreamWriter output;
 
   /// What this side receives.
-  final SecureStreamReader input;
+  final PQSecureStreamReader input;
 
   /// The record cipher.
   final AeadAlgorithm aead;
@@ -120,10 +120,10 @@ final class SecureChannel {
 
   SigningPublicKey? _peerKey;
 
-  SecureChannel._(
+  PQSecureChannel._(
     CryptoContext ctx,
     this.aead,
-    SecureStreamOptions options,
+    PQSecureStreamOptions options,
     FrameReader frames,
     StreamSink<List<int>> sink,
     void Function()? destroy,
@@ -133,7 +133,7 @@ final class SecureChannel {
     SigningPublicKey? peerKey,
   }) : protocol = options.protocol,
        _peerKey = peerKey,
-       output = SecureStreamWriter.internal(
+       output = PQSecureStreamWriter.internal(
          ctx.aead(aead),
          Uint8List.fromList(
            isClient ? sessionKey.sublist(0, 32) : sessionKey.sublist(32),
@@ -141,7 +141,7 @@ final class SecureChannel {
          sink,
          destroy,
        ),
-       input = SecureStreamReader.internal(
+       input = PQSecureStreamReader.internal(
          ctx.aead(aead),
          Uint8List.fromList(
            isClient ? sessionKey.sublist(32) : sessionKey.sublist(0, 32),
@@ -170,9 +170,9 @@ final class SecureChannel {
   /// [abort] (for a `Socket`, `socket.destroy`); otherwise [output] is
   /// closed without waiting for it to flush.
   ///
-  /// Throws [SecureChannelException] if the handshake fails; the connection
+  /// Throws [PQSecureChannelException] if the handshake fails; the connection
   /// is closed in that case.
-  static Future<SecureChannel> connect(
+  static Future<PQSecureChannel> connect(
     Stream<List<int>> input,
     StreamSink<List<int>> output, {
     required SigningPublicKey serverKey,
@@ -180,7 +180,7 @@ final class SecureChannel {
     String clientId = '',
     SigningKeyPair? clientIdentity,
     PostQuantumCryptoEngine? engine,
-    SecureChannelOptions options = const SecureChannelOptions(),
+    PQSecureChannelOptions options = const PQSecureChannelOptions(),
     void Function()? destroy,
   }) {
     final e = engine ?? PostQuantumCryptoEngine();
@@ -223,13 +223,13 @@ final class SecureChannel {
         publicKey: serverKey,
         context: _serverContext,
       )) {
-        throw const SecureChannelException(
+        throw const PQSecureChannelException(
           'Server identity could not be verified',
         );
       }
       final authRequired = flags & _flagClientAuth != 0;
       if (authRequired && clientIdentity == null) {
-        throw const SecureChannelException(
+        throw const PQSecureChannelException(
           'Server requires client authentication',
         );
       }
@@ -249,7 +249,7 @@ final class SecureChannel {
               .toBytes();
       writeFrame(output, keyExchange);
 
-      final channel = SecureChannel._(
+      final channel = PQSecureChannel._(
         ctx,
         options.aead,
         options,
@@ -291,16 +291,16 @@ final class SecureChannel {
   /// signing key, and the callback decides whether that key may connect.
   /// [destroy] is as in [connect].
   ///
-  /// Throws [SecureChannelException] if the handshake fails; the connection
+  /// Throws [PQSecureChannelException] if the handshake fails; the connection
   /// is closed in that case.
-  static Future<SecureChannel> accept(
+  static Future<PQSecureChannel> accept(
     Stream<List<int>> input,
     StreamSink<List<int>> output, {
     required SigningKeyPair identity,
     required String serverId,
     ClientAuthorizer? authorizeClient,
     PostQuantumCryptoEngine? engine,
-    SecureChannelOptions options = const SecureChannelOptions(),
+    PQSecureChannelOptions options = const PQSecureChannelOptions(),
     void Function()? destroy,
   }) {
     final e = engine ?? PostQuantumCryptoEngine();
@@ -311,7 +311,7 @@ final class SecureChannel {
       final (aead, protocol, clientId) = _parse(hello, (r) {
         _expectType(r, _clientHello);
         if (r.u8() != wireVersion) {
-          throw const SecureChannelException('Unsupported protocol version');
+          throw const PQSecureChannelException('Unsupported protocol version');
         }
         final aead = AeadAlgorithm.fromId(r.u16());
         r.fixed(_nonceLength);
@@ -321,7 +321,7 @@ final class SecureChannel {
         return (aead, protocol, clientId);
       });
       if (protocol != options.protocol) {
-        throw const SecureChannelException('Application protocol mismatch');
+        throw const PQSecureChannelException('Application protocol mismatch');
       }
       ctx.policy.checkAead(aead);
       final flags = authorizeClient == null ? 0 : _flagClientAuth;
@@ -366,7 +366,7 @@ final class SecureChannel {
           transcript: _hybridTranscript(ctx, clientId, serverId, transcript),
           length: _sessionKeyLength,
         );
-        final channel = SecureChannel._(
+        final channel = PQSecureChannel._(
           ctx,
           aead,
           options,
@@ -406,14 +406,14 @@ final class SecureChannel {
   /// Returns the next message from [input], or `null` once the peer has
   /// closed its direction.
   ///
-  /// Throws [SecureStreamException] if the stream was tampered with,
+  /// Throws [PQSecureStreamException] if the stream was tampered with,
   /// truncated or stalled; both directions are closed in that case. Throws
   /// [StateError] once the channel has failed or been aborted, or if another
   /// [receive] is in progress.
   Future<Uint8List?> receive() async {
     try {
       return await input.read();
-    } on SecureStreamException {
+    } on PQSecureStreamException {
       await output.abort();
       rethrow;
     }
@@ -427,21 +427,21 @@ final class SecureChannel {
     }
   }
 
-  /// Closes this side's direction (see [SecureStreamWriter.close]): a
+  /// Closes this side's direction (see [PQSecureStreamWriter.close]): a
   /// half-close. [receive] still returns the peer's remaining messages until
   /// its own close, and the connection is released once both sides have
   /// closed. Call [abort] to stop reading from a peer that does not close.
   Future<void> close() async {
     try {
       await output.close();
-    } on SecureStreamException {
+    } on PQSecureStreamException {
       // The peer may already be gone; its side reports what it received.
     }
   }
 
   /// Drops the connection at once in both directions: the peer sees a
   /// truncated stream, and a pending [receive] fails with
-  /// [SecureStreamException].
+  /// [PQSecureStreamException].
   Future<void> abort() async {
     await input.cancel();
     await output.abort();
@@ -452,39 +452,39 @@ final class SecureChannel {
   // ---------------------------------------------------------------------------
 
   /// Runs [body] within the handshake timeout. On any failure it tears the
-  /// connection down and rethrows as [SecureChannelException].
-  static Future<SecureChannel> _handshake(
+  /// connection down and rethrows as [PQSecureChannelException].
+  static Future<PQSecureChannel> _handshake(
     FrameReader frames,
     StreamSink<List<int>> output,
     void Function()? destroy,
-    SecureChannelOptions options,
-    Future<SecureChannel> Function() body,
+    PQSecureChannelOptions options,
+    Future<PQSecureChannel> Function() body,
   ) async {
     try {
       return await body().timeout(options.handshakeTimeout);
     } catch (e) {
       await teardown(frames, output, destroy);
       throw switch (e) {
-        SecureChannelException() => e,
-        TimeoutException() => const SecureChannelException(
+        PQSecureChannelException() => e,
+        TimeoutException() => const PQSecureChannelException(
           'Handshake timed out',
         ),
         // The peer hung up: most often it refused us.
         _ when identical(e, closedByPeer) || identical(e, truncatedStream) =>
-          const SecureChannelException(
+          const PQSecureChannelException(
             'Connection closed by peer during the handshake',
           ),
-        SecureStreamException(:final message) ||
+        PQSecureStreamException(:final message) ||
         PostQuantumCryptoException(
           :final message,
-        ) => SecureChannelException('Handshake failed: $message'),
-        _ => SecureChannelException('Handshake failed (${e.runtimeType})'),
+        ) => PQSecureChannelException('Handshake failed: $message'),
+        _ => PQSecureChannelException('Handshake failed (${e.runtimeType})'),
       };
     }
   }
 
   /// Finishes the handshake with [steps], wiping the keys if they fail.
-  Future<SecureChannel> _confirm(Future<void> Function() steps) async {
+  Future<PQSecureChannel> _confirm(Future<void> Function() steps) async {
     try {
       await steps();
       return this;
@@ -502,7 +502,7 @@ final class SecureChannel {
   ) async {
     final (type, payload) = await input.readRecord();
     if (type != RecordType.clientAuth) {
-      throw const SecureChannelException('Client authentication required');
+      throw const PQSecureChannelException('Client authentication required');
     }
     final (key, proof) = _parse(payload, (r) {
       final algorithm = SignatureAlgorithm.fromId(r.u16());
@@ -520,7 +520,7 @@ final class SecureChannel {
       publicKey: key,
       context: _clientContext,
     )) {
-      throw const SecureChannelException('Client authentication failed');
+      throw const PQSecureChannelException('Client authentication failed');
     }
     bool allowed;
     try {
@@ -529,7 +529,7 @@ final class SecureChannel {
       allowed = false;
     }
     if (!allowed) {
-      throw const SecureChannelException('Client is not authorized');
+      throw const PQSecureChannelException('Client is not authorized');
     }
     _peerKey = key;
   }
@@ -537,7 +537,7 @@ final class SecureChannel {
   Future<void> _expectFinished() async {
     final (type, payload) = await input.readRecord();
     if (type != RecordType.finished || payload.isNotEmpty) {
-      throw const SecureChannelException('Expected Finished');
+      throw const PQSecureChannelException('Expected Finished');
     }
   }
 
@@ -591,5 +591,5 @@ final class SecureChannel {
   }
 
   static Never _malformed() =>
-      throw const SecureChannelException('Malformed handshake message');
+      throw const PQSecureChannelException('Malformed handshake message');
 }

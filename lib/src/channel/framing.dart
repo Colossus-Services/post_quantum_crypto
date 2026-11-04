@@ -15,11 +15,11 @@ const int frameLimit = 64 * 1024;
 
 /// The input ended where a header or handshake message was expected.
 @internal
-const closedByPeer = SecureStreamException('Stream closed by peer');
+const closedByPeer = PQSecureStreamException('Stream closed by peer');
 
 /// The input ended before the End record.
 @internal
-const truncatedStream = SecureStreamException(
+const truncatedStream = PQSecureStreamException(
   'Stream ended without an End record (truncated)',
 );
 
@@ -63,14 +63,14 @@ final class FrameReader {
   Future<Uint8List?> next() async {
     if (!await _fill(4)) {
       if (_pending.isEmpty) return null;
-      throw const SecureStreamException('Stream ended mid-frame');
+      throw const PQSecureStreamException('Stream ended mid-frame');
     }
     final length = ByteData.sublistView(_take(4)).getUint32(0);
     if (length == 0 || length > frameLimit) {
-      throw const SecureStreamException('Invalid frame length');
+      throw const PQSecureStreamException('Invalid frame length');
     }
     if (!await _fill(length)) {
-      throw const SecureStreamException('Stream ended mid-frame');
+      throw const PQSecureStreamException('Stream ended mid-frame');
     }
     return Uint8List.fromList(_take(length));
   }

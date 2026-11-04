@@ -53,19 +53,19 @@ final class _FailingSink implements StreamSink<List<int>> {
 }
 
 Matcher streamError([String? message]) => throwsA(
-  isA<SecureStreamException>().having(
+  isA<PQSecureStreamException>().having(
     (e) => e.message,
     'message',
     message == null ? anything : contains(message),
   ),
 );
 
-const options = SecureStreamOptions(protocol: 'test/backup/v1');
+const options = PQSecureStreamOptions(protocol: 'test/backup/v1');
 final sharedKey = Uint8List.fromList(List.generate(32, (i) => i));
 
 /// Writes [messages] to a [Captured] with [encrypt], then closes.
 Future<Captured> write(
-  SecureStreamWriter Function(StreamSink<List<int>> sink) encrypt,
+  PQSecureStreamWriter Function(StreamSink<List<int>> sink) encrypt,
   List<List<int>> messages,
 ) async {
   final out = Captured();
@@ -78,7 +78,7 @@ Future<Captured> write(
   return out;
 }
 
-Future<List<String>> readAll(SecureStreamReader reader) =>
+Future<List<String>> readAll(PQSecureStreamReader reader) =>
     reader.messages.map(utf8.decode).toList();
 
 void main() {
@@ -90,21 +90,21 @@ void main() {
     xWing = engine.generateEncryptionKeyPair(algorithm: KemAlgorithm.xWing);
   });
 
-  SecureStreamWriter toRecipient(
+  PQSecureStreamWriter toRecipient(
     StreamSink<List<int>> sink, [
     EncryptionKeyPair? to,
-  ]) => SecureStream.encryptTo(
+  ]) => PQSecureStream.encryptTo(
     sink,
     recipient: (to ?? mlKem).publicKey,
     engine: engine,
     options: options,
   );
 
-  Future<SecureStreamReader> fromRecipient(
+  Future<PQSecureStreamReader> fromRecipient(
     Stream<List<int>> input, [
     EncryptionKeyPair? to,
-    SecureStreamOptions opts = options,
-  ]) => SecureStream.decryptFrom(
+    PQSecureStreamOptions opts = options,
+  ]) => PQSecureStream.decryptFrom(
     input,
     privateKey: (to ?? mlKem).privateKey,
     engine: engine,
@@ -170,7 +170,7 @@ void main() {
         fromRecipient(
           out.replay(),
           null,
-          const SecureStreamOptions(protocol: 'test/other/v1'),
+          const PQSecureStreamOptions(protocol: 'test/other/v1'),
         ),
         streamError('Application protocol mismatch'),
       );
@@ -178,7 +178,7 @@ void main() {
 
     test('a shared-key stream is not read as a recipient stream', () async {
       final out = await write(
-        (s) => SecureStream.encryptWithKey(
+        (s) => PQSecureStream.encryptWithKey(
           s,
           sharedKey: sharedKey,
           engine: engine,
@@ -268,11 +268,11 @@ void main() {
 
     test('an AEAD the reader policy forbids is refused', () async {
       final out = await write(
-        (s) => SecureStream.encryptTo(
+        (s) => PQSecureStream.encryptTo(
           s,
           recipient: mlKem.publicKey,
           engine: engine,
-          options: const SecureStreamOptions(
+          options: const PQSecureStreamOptions(
             protocol: 'test/backup/v1',
             aead: AeadAlgorithm.chacha20Poly1305,
           ),
@@ -280,7 +280,7 @@ void main() {
         [utf8.encode('x')],
       );
       await expectLater(
-        SecureStream.decryptFrom(
+        PQSecureStream.decryptFrom(
           out.replay(),
           privateKey: mlKem.privateKey,
           engine: engine.withPolicy(
@@ -295,12 +295,12 @@ void main() {
     });
 
     test('ChaCha20-Poly1305 streams round-trip', () async {
-      const chacha = SecureStreamOptions(
+      const chacha = PQSecureStreamOptions(
         protocol: 'test/backup/v1',
         aead: AeadAlgorithm.chacha20Poly1305,
       );
       final out = await write(
-        (s) => SecureStream.encryptTo(
+        (s) => PQSecureStream.encryptTo(
           s,
           recipient: mlKem.publicKey,
           engine: engine,
@@ -314,8 +314,8 @@ void main() {
   });
 
   group('with a shared key', () {
-    SecureStreamWriter encrypt(StreamSink<List<int>> s) =>
-        SecureStream.encryptWithKey(
+    PQSecureStreamWriter encrypt(StreamSink<List<int>> s) =>
+        PQSecureStream.encryptWithKey(
           s,
           sharedKey: sharedKey,
           engine: engine,
@@ -324,7 +324,7 @@ void main() {
 
     test('round-trips messages', () async {
       final out = await write(encrypt, [utf8.encode('a'), utf8.encode('b')]);
-      final reader = await SecureStream.decryptWithKey(
+      final reader = await PQSecureStream.decryptWithKey(
         out.replay(),
         sharedKey: sharedKey,
         engine: engine,
@@ -341,7 +341,7 @@ void main() {
 
     test('a wrong key fails on the first record', () async {
       final out = await write(encrypt, [utf8.encode('a')]);
-      final reader = await SecureStream.decryptWithKey(
+      final reader = await PQSecureStream.decryptWithKey(
         out.replay(),
         sharedKey: Uint8List(32),
         engine: engine,
@@ -352,14 +352,14 @@ void main() {
 
     test('a short key is refused', () {
       expect(
-        () => SecureStream.encryptWithKey(
+        () => PQSecureStream.encryptWithKey(
           StreamController<List<int>>(),
           sharedKey: Uint8List(31),
         ),
         throwsA(isA<InvalidInputException>()),
       );
       expect(
-        () => SecureStream.decryptWithKey(
+        () => PQSecureStream.decryptWithKey(
           const Stream.empty(),
           sharedKey: Uint8List(16),
         ),
@@ -380,10 +380,10 @@ void main() {
         transcript: t,
       );
       final out = await write(
-        (s) => SecureStream.encryptWithKey(s, sharedKey: init.sessionKey),
+        (s) => PQSecureStream.encryptWithKey(s, sharedKey: init.sessionKey),
         [utf8.encode('hybrid')],
       );
-      final reader = await SecureStream.decryptWithKey(
+      final reader = await PQSecureStream.decryptWithKey(
         out.replay(),
         sharedKey: key,
       );
@@ -448,7 +448,7 @@ void main() {
       final reader = await fromRecipient(
         out.replay(),
         null,
-        const SecureStreamOptions(
+        const PQSecureStreamOptions(
           protocol: 'test/backup/v1',
           maxMessageLength: 4999,
         ),
@@ -462,7 +462,7 @@ void main() {
       final reader = await fromRecipient(
         pipe.stream,
         null,
-        const SecureStreamOptions(
+        const PQSecureStreamOptions(
           protocol: 'test/backup/v1',
           receiveTimeout: Duration(milliseconds: 200),
         ),

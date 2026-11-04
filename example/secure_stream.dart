@@ -21,9 +21,9 @@ Future<void> main() async {
     // buffering; only the recipient's private key can read it back.
     final auditor = engine.generateEncryptionKeyPair();
     final file = File('${dir.path}/audit.log.pqs');
-    const options = SecureStreamOptions(protocol: 'example/audit-log/v1');
+    const options = PQSecureStreamOptions(protocol: 'example/audit-log/v1');
 
-    final log = SecureStream.encryptTo(
+    final log = PQSecureStream.encryptTo(
       file.openWrite(),
       recipient: auditor.publicKey,
       engine: engine,
@@ -35,7 +35,7 @@ Future<void> main() async {
     await log.close(); // writes the authenticated End record
     print('wrote ${await file.length()} bytes to ${file.path}');
 
-    final reader = await SecureStream.decryptFrom(
+    final reader = await PQSecureStream.decryptFrom(
       file.openRead(),
       privateKey: auditor.privateKey,
       engine: engine,
@@ -50,14 +50,14 @@ Future<void> main() async {
     final bytes = await file.readAsBytes();
     await file.writeAsBytes(bytes.sublist(0, bytes.length - 21));
     try {
-      final cut = await SecureStream.decryptFrom(
+      final cut = await PQSecureStream.decryptFrom(
         file.openRead(),
         privateKey: auditor.privateKey,
         engine: engine,
         options: options,
       );
       await cut.messages.drain<void>();
-    } on SecureStreamException catch (e) {
+    } on PQSecureStreamException catch (e) {
       print('truncated file refused: ${e.message}');
     }
 
@@ -78,12 +78,12 @@ Future<void> main() async {
     );
 
     final pipe = StreamController<List<int>>();
-    final sender = SecureStream.encryptWithKey(
+    final sender = PQSecureStream.encryptWithKey(
       pipe.sink,
       sharedKey: init.sessionKey,
       engine: engine,
     );
-    final receiver = SecureStream.decryptWithKey(
+    final receiver = PQSecureStream.decryptWithKey(
       pipe.stream,
       sharedKey: bobKey,
       engine: engine,

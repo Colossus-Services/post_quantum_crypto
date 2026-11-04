@@ -13,7 +13,7 @@ import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
 
 Future<void> main() async {
   final engine = PostQuantumCryptoEngine();
-  const options = SecureChannelOptions(
+  const options = PQSecureChannelOptions(
     protocol: 'example/echo/v1',
     // A peer that goes silent mid-conversation is dropped.
     receiveTimeout: Duration(seconds: 30),
@@ -91,7 +91,7 @@ Future<void> main() async {
       engine: engine,
       options: options,
     );
-  } on SecureChannelException catch (e) {
+  } on PQSecureChannelException catch (e) {
     print('alice: refused: ${e.message}');
   }
 
@@ -107,7 +107,7 @@ Future<void> main() async {
       engine: engine,
       options: options,
     );
-  } on SecureChannelException catch (e) {
+  } on PQSecureChannelException catch (e) {
     print('mallory: refused: ${e.message}');
   }
 

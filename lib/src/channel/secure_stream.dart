@@ -12,7 +12,7 @@
 /// ```
 ///
 /// - Messages keep their boundaries; a message larger than
-///   [SecureStream.maxRecordPayload] spans several records.
+///   [PQSecureStream.maxRecordPayload] spans several records.
 /// - The record number is the nonce, and the record type goes into the AAD.
 ///   A record that is modified, retyped, replayed, reordered or dropped
 ///   fails to decrypt.
@@ -36,13 +36,13 @@
 /// - Mode 2 is from a key both ends already share. The random salt gives
 ///   every stream a fresh key, so the shared key may be reused.
 ///
-/// A `SecureChannel` uses two secure streams, one per direction, keyed by
+/// A `PQSecureChannel` uses two secure streams, one per direction, keyed by
 /// its handshake instead of a header.
 ///
 /// A one-way stream is confidential and tamper-evident, but does not say
 /// who wrote it: anyone holding the recipient's public key (or the shared
 /// key) can write one. Sign the content (`signDetached`, `signStream`) or
-/// use a `SecureChannel` when the writer must be authenticated.
+/// use a `PQSecureChannel` when the writer must be authenticated.
 library;
 
 import 'dart:async';
@@ -62,7 +62,7 @@ import 'framing.dart';
 
 /// Settings for a secure stream. Writer and reader must use the same
 /// [protocol].
-base class SecureStreamOptions {
+base class PQSecureStreamOptions {
   /// The application protocol, e.g. `"myapp/backup/v1"`. It is bound into
   /// the key, so a stream for one protocol cannot be read as another.
   final String protocol;
@@ -78,7 +78,7 @@ base class SecureStreamOptions {
   /// The largest message a reader reassembles.
   final int maxMessageLength;
 
-  const SecureStreamOptions({
+  const PQSecureStreamOptions({
     this.protocol = 'post_quantum_crypto/secure-stream',
     this.aead = AeadAlgorithm.aes256Gcm,
     this.receiveTimeout,
@@ -87,7 +87,7 @@ base class SecureStreamOptions {
 }
 
 /// Creates secure streams. See the library documentation for the format.
-abstract final class SecureStream {
+abstract final class PQSecureStream {
   /// The format version.
   static const version = 1;
 
@@ -112,13 +112,13 @@ abstract final class SecureStream {
   /// holder of the matching private key can read it.
   ///
   /// [destroy], if given, tears the transport down at once on
-  /// [SecureStreamWriter.abort]; otherwise [output] is closed without
+  /// [PQSecureStreamWriter.abort]; otherwise [output] is closed without
   /// waiting for it to flush.
-  static SecureStreamWriter encryptTo(
+  static PQSecureStreamWriter encryptTo(
     StreamSink<List<int>> output, {
     required EncryptionPublicKey recipient,
     PostQuantumCryptoEngine? engine,
-    SecureStreamOptions options = const SecureStreamOptions(),
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
     void Function()? destroy,
   }) {
     final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
@@ -151,13 +151,13 @@ abstract final class SecureStream {
   /// Opens a stream written by [encryptTo] for [privateKey]. Reads the
   /// header from [input] before returning.
   ///
-  /// Throws [SecureStreamException] if the header is malformed, was written
+  /// Throws [PQSecureStreamException] if the header is malformed, was written
   /// for another key or protocol, or uses an AEAD the policy forbids.
-  static Future<SecureStreamReader> decryptFrom(
+  static Future<PQSecureStreamReader> decryptFrom(
     Stream<List<int>> input, {
     required EncryptionPrivateKey privateKey,
     PostQuantumCryptoEngine? engine,
-    SecureStreamOptions options = const SecureStreamOptions(),
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
     void Function()? destroy,
   }) {
     final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
@@ -167,7 +167,7 @@ abstract final class SecureStream {
       final enc = r.fixed(kem.ciphertextLength);
       r.expectEnd();
       if (kem != privateKey.algorithm || keyId != privateKey.keyId) {
-        throw const SecureStreamException('Stream is not for this key');
+        throw const PQSecureStreamException('Stream is not for this key');
       }
       ctx.policy
         ..checkKem(kem)
@@ -179,11 +179,11 @@ abstract final class SecureStream {
   /// Starts a stream keyed by [sharedKey] (at least 32 bytes, for example a
   /// session key from `establishHybridKey`). Each stream draws a random
   /// salt, so the same key can protect many streams.
-  static SecureStreamWriter encryptWithKey(
+  static PQSecureStreamWriter encryptWithKey(
     StreamSink<List<int>> output, {
     required List<int> sharedKey,
     PostQuantumCryptoEngine? engine,
-    SecureStreamOptions options = const SecureStreamOptions(),
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
     void Function()? destroy,
   }) {
     _checkSharedKey(sharedKey);
@@ -202,12 +202,12 @@ abstract final class SecureStream {
   }
 
   /// Opens a stream written by [encryptWithKey] with the same [sharedKey].
-  /// A wrong key shows as [SecureStreamException] on the first record.
-  static Future<SecureStreamReader> decryptWithKey(
+  /// A wrong key shows as [PQSecureStreamException] on the first record.
+  static Future<PQSecureStreamReader> decryptWithKey(
     Stream<List<int>> input, {
     required List<int> sharedKey,
     PostQuantumCryptoEngine? engine,
-    SecureStreamOptions options = const SecureStreamOptions(),
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
     void Function()? destroy,
   }) {
     _checkSharedKey(sharedKey);
@@ -225,7 +225,7 @@ abstract final class SecureStream {
     }
   }
 
-  static ByteWriter _headerStart(int mode, SecureStreamOptions options) =>
+  static ByteWriter _headerStart(int mode, PQSecureStreamOptions options) =>
       ByteWriter()
         ..u8(_header)
         ..u8(version)
@@ -233,17 +233,17 @@ abstract final class SecureStream {
         ..u16(options.aead.id)
         ..bytes16(utf8Bytes(options.protocol));
 
-  static SecureStreamWriter _startWriter(
+  static PQSecureStreamWriter _startWriter(
     CryptoContext ctx,
     StreamSink<List<int>> output,
     Uint8List header,
     Uint8List ikm,
-    SecureStreamOptions options,
+    PQSecureStreamOptions options,
     void Function()? destroy,
   ) {
     final key = _deriveKey(ctx, ikm, header);
     writeFrame(output, header);
-    return SecureStreamWriter.internal(
+    return PQSecureStreamWriter.internal(
       ctx.aead(options.aead),
       key,
       output,
@@ -251,10 +251,10 @@ abstract final class SecureStream {
     );
   }
 
-  static Future<SecureStreamReader> _openReader(
+  static Future<PQSecureStreamReader> _openReader(
     CryptoContext ctx,
     Stream<List<int>> input,
-    SecureStreamOptions options,
+    PQSecureStreamOptions options,
     void Function()? destroy,
     int mode,
     Uint8List Function(ByteReader r) keyMaterial,
@@ -269,20 +269,20 @@ abstract final class SecureStream {
       final (aead, ikm) = parseStreamMessage(header, (r) {
         if (r.u8() != _header) malformedStream();
         if (r.u8() != version) {
-          throw const SecureStreamException('Unsupported stream version');
+          throw const PQSecureStreamException('Unsupported stream version');
         }
         if (r.u8() != mode) {
-          throw const SecureStreamException('Unexpected stream key mode');
+          throw const PQSecureStreamException('Unexpected stream key mode');
         }
         final aead = AeadAlgorithm.fromId(r.u16());
         if (utf8String(r.bytes16()) != options.protocol) {
-          throw const SecureStreamException('Application protocol mismatch');
+          throw const PQSecureStreamException('Application protocol mismatch');
         }
         ctx.policy.checkAead(aead);
         return (aead, keyMaterial(r));
       });
       final key = _deriveKey(ctx, ikm, header);
-      return SecureStreamReader.internal(
+      return PQSecureStreamReader.internal(
         ctx.aead(aead),
         key,
         frames,
@@ -296,7 +296,7 @@ abstract final class SecureStream {
   }
 
   static Never _timedOut() =>
-      throw const SecureStreamException('Receive timed out');
+      throw const PQSecureStreamException('Receive timed out');
 
   /// Derives the record key, and zeroes [ikm].
   static Uint8List _deriveKey(
@@ -360,7 +360,7 @@ Uint8List _nonce(int seq) =>
 ///
 /// [add] queues each message on the output as one or more records; [close]
 /// writes the End record and closes the output.
-final class SecureStreamWriter {
+final class PQSecureStreamWriter {
   final AeadCipher _cipher;
   final Uint8List _key;
   final StreamSink<List<int>> _output;
@@ -370,7 +370,7 @@ final class SecureStreamWriter {
   bool _failed = false;
 
   @internal
-  SecureStreamWriter.internal(
+  PQSecureStreamWriter.internal(
     this._cipher,
     this._key,
     this._output,
@@ -381,17 +381,17 @@ final class SecureStreamWriter {
   bool get isOpen => !_closed && !_failed;
 
   /// Writes [message], split into records of at most
-  /// [SecureStream.maxRecordPayload] bytes.
+  /// [PQSecureStream.maxRecordPayload] bytes.
   ///
   /// Throws [StateError] after [close] or [abort], and once
-  /// [SecureStream.maxRecords] records have been written.
+  /// [PQSecureStream.maxRecords] records have been written.
   void add(List<int> message) {
     if (!isOpen) throw StateError('Stream is closed');
     final bytes = message is Uint8List ? message : Uint8List.fromList(message);
     var offset = 0;
     do {
-      final end = bytes.length - offset > SecureStream.maxRecordPayload
-          ? offset + SecureStream.maxRecordPayload
+      final end = bytes.length - offset > PQSecureStream.maxRecordPayload
+          ? offset + PQSecureStream.maxRecordPayload
           : bytes.length;
       writeRecord(
         end == bytes.length ? RecordType.data : RecordType.dataMore,
@@ -410,7 +410,7 @@ final class SecureStreamWriter {
   }
 
   /// Writes the End record and closes the output, waiting for it to flush.
-  /// Safe to call more than once. Throws [SecureStreamException] if the
+  /// Safe to call more than once. Throws [PQSecureStreamException] if the
   /// output fails to close (for a file, a write error): the stream may then
   /// be incomplete.
   ///
@@ -443,7 +443,7 @@ final class SecureStreamWriter {
   /// Writes one record of [type].
   @internal
   void writeRecord(int type, Uint8List payload) {
-    if (_seq >= SecureStream.maxRecords) {
+    if (_seq >= PQSecureStream.maxRecords) {
       throw StateError('Record limit reached; start a new stream');
     }
     final sealed = _cipher.seal(
@@ -461,7 +461,7 @@ final class SecureStreamWriter {
 }
 
 /// The reading end of a secure stream.
-final class SecureStreamReader {
+final class PQSecureStreamReader {
   final AeadCipher _cipher;
   final Uint8List _key;
   final FrameReader _frames;
@@ -476,11 +476,11 @@ final class SecureStreamReader {
   bool _cancelled = false;
 
   @internal
-  SecureStreamReader.internal(
+  PQSecureStreamReader.internal(
     this._cipher,
     this._key,
     this._frames,
-    SecureStreamOptions options, {
+    PQSecureStreamOptions options, {
     void Function()? destroy,
     StreamSink<List<int>>? output,
   }) : _receiveTimeout = options.receiveTimeout,
@@ -494,7 +494,7 @@ final class SecureStreamReader {
   /// Returns the next message, or `null` at the authenticated end of the
   /// stream.
   ///
-  /// Throws [SecureStreamException] if the stream was tampered with, ended
+  /// Throws [PQSecureStreamException] if the stream was tampered with, ended
   /// without an End record, carried data after it, stalled past
   /// `receiveTimeout` or held a message over `maxMessageLength`; the input
   /// is closed in that case. Throws [StateError] once the stream has failed
@@ -511,19 +511,19 @@ final class SecureStreamReader {
         switch (type) {
           case RecordType.data || RecordType.dataMore:
             if (message.length + payload.length > _maxMessageLength) {
-              throw const SecureStreamException('Message too long');
+              throw const PQSecureStreamException('Message too long');
             }
             message.add(payload);
             if (type == RecordType.data) return message.takeBytes();
           case RecordType.end when message.isEmpty && payload.isEmpty:
             if (await _nextFrame() != null) {
-              throw const SecureStreamException('Data after end of stream');
+              throw const PQSecureStreamException('Data after end of stream');
             }
             _ended = true;
             zeroize(_key);
             return null;
           default:
-            throw const SecureStreamException('Unexpected record');
+            throw const PQSecureStreamException('Unexpected record');
         }
       }
     } catch (e) {
@@ -542,7 +542,7 @@ final class SecureStreamReader {
   }
 
   /// Stops reading and closes the input. A pending [read] fails with
-  /// [SecureStreamException].
+  /// [PQSecureStreamException].
   Future<void> cancel() async {
     _cancelled = true;
     await _fail();
@@ -564,15 +564,15 @@ final class SecureStreamReader {
             aad,
           );
     if (plaintext == null) {
-      throw const SecureStreamException('Record failed authentication');
+      throw const PQSecureStreamException('Record failed authentication');
     }
     _seq++;
     return (type, plaintext);
   }
 
-  Future<SecureStreamException> _failWith(Object e) async {
+  Future<PQSecureStreamException> _failWith(Object e) async {
     if (_cancelled) {
-      return const SecureStreamException('Stream was cancelled locally');
+      return const PQSecureStreamException('Stream was cancelled locally');
     }
     // A stream with a gap in it must not be read further.
     await _fail();
@@ -584,7 +584,7 @@ final class SecureStreamReader {
     final timeout = _receiveTimeout;
     return timeout == null
         ? next
-        : next.timeout(timeout, onTimeout: SecureStream._timedOut);
+        : next.timeout(timeout, onTimeout: PQSecureStream._timedOut);
   }
 
   Future<void> _fail() async {
@@ -600,7 +600,7 @@ final class SecureStreamReader {
 // -----------------------------------------------------------------------------
 
 /// Parses a header or handshake message strictly; any structural problem is
-/// a [SecureStreamException] (or the more specific error thrown by [parse]).
+/// a [PQSecureStreamException] (or the more specific error thrown by [parse]).
 @internal
 T parseStreamMessage<T>(Uint8List data, T Function(ByteReader r) parse) {
   try {
@@ -612,14 +612,14 @@ T parseStreamMessage<T>(Uint8List data, T Function(ByteReader r) parse) {
 
 @internal
 Never malformedStream() =>
-    throw const SecureStreamException('Malformed stream header');
+    throw const PQSecureStreamException('Malformed stream header');
 
-/// [e] as a [SecureStreamException], prefixing library errors with [what].
+/// [e] as a [PQSecureStreamException], prefixing library errors with [what].
 @internal
-SecureStreamException asStreamError(Object e, String what) => switch (e) {
-  SecureStreamException() => e,
-  PostQuantumCryptoException(:final message) => SecureStreamException(
+PQSecureStreamException asStreamError(Object e, String what) => switch (e) {
+  PQSecureStreamException() => e,
+  PostQuantumCryptoException(:final message) => PQSecureStreamException(
     '$what: $message',
   ),
-  _ => SecureStreamException('$what (${e.runtimeType})'),
+  _ => PQSecureStreamException('$what (${e.runtimeType})'),
 };

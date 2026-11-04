@@ -247,7 +247,7 @@ The key stays secret if either ML-KEM-768 or X25519 is unbroken. Non-hybrid
 KEMs are rejected, which prevents downgrades. **This is not TLS and not
 authenticated**: obtain the responder's public key through a trusted channel.
 
-For an authenticated connection, use a `SecureChannel` (below), which
+For an authenticated connection, use a `PQSecureChannel` (below), which
 builds on this.
 
 ## Secure streams and channels
@@ -255,7 +255,7 @@ builds on this.
 Three layers, each built on the one before. All are package-specific
 protocols, not TLS.
 
-**`SecureStream`**: one direction of protected messages over any byte
+**`PQSecureStream`**: one direction of protected messages over any byte
 stream: a file, a socket, a pipe, a queue.
 - Messages are numbered AEAD records. They keep their boundaries and are
   written as soon as they are added.
@@ -264,31 +264,31 @@ stream: a file, a socket, a pipe, a queue.
 
 ```dart
 // To a recipient's ML-KEM or X-Wing key; no round trip needed.
-final writer = SecureStream.encryptTo(
+final writer = PQSecureStream.encryptTo(
   File('audit.log.pqs').openWrite(),
   recipient: auditor.publicKey,
 );
 writer.add(utf8.encode('login alice'));
 await writer.close(); // writes the End record
 
-final reader = await SecureStream.decryptFrom(
+final reader = await PQSecureStream.decryptFrom(
   File('audit.log.pqs').openRead(),
   privateKey: auditor.privateKey,
 );
 await for (final message in reader.messages) { /* ... */ }
-// A file cut short throws SecureStreamException('... truncated').
+// A file cut short throws PQSecureStreamException('... truncated').
 ```
 
 `encryptWithKey` / `decryptWithKey` key a stream from a key both ends
 already share. Every stream gets a random salt, so the key can be reused.
 
-**`SecureChannel`**: an authenticated, two-way channel over any byte stream.
+**`PQSecureChannel`**: an authenticated, two-way channel over any byte stream.
 - The server signs a fresh X-Wing key, generated for each connection, with
   its identity key, which the client has pinned. This gives server
   authentication and forward secrecy, secure while either ML-KEM-768 or
   X25519 holds.
 - The server can require clients to authenticate with their own keys.
-- Each direction is a `SecureStream`.
+- Each direction is a `PQSecureStream`.
 
 **`PQSecureServer` / `PQSecureSocket`** (`post_quantum_crypto_io`): the
 channel over TCP.
@@ -317,7 +317,7 @@ channel.send(utf8.encode('hello'));
 final reply = await channel.receive(); // null once the server closes
 ```
 
-`SecureChannel.connect` / `accept` run the same handshake over any
+`PQSecureChannel.connect` / `accept` run the same handshake over any
 `Stream<List<int>>` and `StreamSink<List<int>>`, for example a WebSocket.
 
 ## Keys
@@ -420,8 +420,8 @@ Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 `SecureRandomUnavailableException`, `UnsupportedPlatformException`,
 `ResourceLimitExceededException`, `PolicyViolationException`,
 `KeyNotFoundException`, `ContextMismatchException`,
-`OperationCancelledException`, `SecureStreamException` and its subclass
-`SecureChannelException` (handshake failures). After parsing, every authentication failure
+`OperationCancelledException`, `PQSecureStreamException` and its subclass
+`PQSecureChannelException` (handshake failures). After parsing, every authentication failure
 is the same `DecryptionFailedException`, so errors cannot be used as an
 oracle. Messages never contain key material.
 
