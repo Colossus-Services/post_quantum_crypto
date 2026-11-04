@@ -16,6 +16,9 @@
 - **Signatures**: ML-DSA-65 (FIPS 204), optional SLH-DSA (FIPS 205),
   detached signatures, signed artifacts and signed manifests.
 - **Hybrid**: X-Wing (ML-KEM-768 + X25519) recipients and key establishment.
+- **Secure streams and channels**: protected messages over any byte stream
+  (files, sockets, pipes), and an authenticated two-way channel with forward
+  secrecy, including over TCP.
 - **Keys**: seed-form keys, fingerprints, lifecycle metadata, SPKI/PKCS#8
   (OpenSSL-compatible), Argon2id-protected exports, key stores, rotation.
 - **Policies**: allowed algorithms, minimum security category, hybrid-only,
@@ -48,6 +51,11 @@ Runnable examples (`dart run example/<name>.dart`):
   PEM export.
 - [`file_encryption.dart`](example/file_encryption.dart): streaming file
   encryption, a file-backed key store and password-protected key export.
+- [`secure_stream.dart`](example/secure_stream.dart): an append-style
+  encrypted file to a recipient's key, truncation detection, and a live
+  pipe with a shared key.
+- [`secure_socket.dart`](example/secure_socket.dart): an echo server over
+  TCP with server and client authentication.
 
 ## Installation
 
@@ -239,6 +247,147 @@ The key stays secret if either ML-KEM-768 or X25519 is unbroken. Non-hybrid
 KEMs are rejected, which prevents downgrades. **This is not TLS and not
 authenticated**: obtain the responder's public key through a trusted channel.
 
+For an authenticated connection, use a `PQSecureChannel` (below), which
+builds on this.
+
+## Secure streams and channels
+
+Three layers, each built on the one before. All are package-specific
+protocols, not TLS.
+
+**`PQSecureStream`**: one direction of protected messages over any byte
+stream: a file, a socket, a pipe, a queue.
+- Messages are numbered AEAD records. They keep their boundaries and are
+  written as soon as they are added.
+- Within a stream, tampering, replayed or reordered records, dropped
+  records and truncation are all detected: the stream ends with an
+  authenticated End record.
+- A one-way stream replayed whole (the same file or recording delivered
+  twice) still decrypts. If that matters, put a message id or timestamp in
+  your messages and reject repeats, or use a `PQSecureChannel`, whose keys
+  are fresh for each connection.
+
+```dart
+// To a recipient's ML-KEM or X-Wing key; no round trip needed.
+final writer = PQSecureStream.encryptTo(
+  File('audit.log.pqs').openWrite(),
+  recipient: auditor.publicKey,
+);
+writer.add(utf8.encode('login alice'));
+await writer.close(); // writes the End record
+
+final reader = await PQSecureStream.decryptFrom(
+  File('audit.log.pqs').openRead(),
+  privateKey: auditor.privateKey,
+);
+await for (final message in reader.messages) { /* ... */ }
+// A file cut short throws PQSecureStreamException('... truncated').
+```
+
+`encryptWithKey` / `decryptWithKey` key a stream from a key both ends
+already share. Every stream gets a random salt, so the key can be reused.
+
+**`PQSecureChannel`**: an authenticated, two-way channel over any byte stream.
+- The server signs a fresh X-Wing key, generated for each connection, with
+  its identity key, which the client has pinned. This gives server
+  authentication and forward secrecy, secure while either ML-KEM-768 or
+  X25519 holds.
+- The server can require clients to authenticate with their own keys. The
+  key and its proof travel encrypted; the `clientId` label is sent in the
+  clear.
+- Each direction is a `PQSecureStream`.
+
+**`PQSecureServer` / `PQSecureSocket`** (`post_quantum_crypto_io`): the
+channel over TCP.
+
+### Simple PQSecureSocket example
+
+An echo server and a client in one program:
+
+```dart
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
+
+Future<void> main() async {
+  final engine = PostQuantumCryptoEngine();
+
+  // The server's long-term identity; clients pin its public key.
+  final identity = engine.generateSigningKeyPair();
+
+  // Server: echo every message back.
+  final server = await PQSecureServer.bind(
+    InternetAddress.loopbackIPv4,
+    4433,
+    identity: identity,
+    serverId: 'echo.example',
+  );
+  server.channels.listen((channel) async {
+    try {
+      await for (final message in channel.messages) {
+        channel.send(message);
+      }
+      await channel.close();
+    } on PQSecureStreamException {
+      await channel.abort(); // a misbehaving client must not stop the server
+    }
+  });
+
+  // Client: the handshake fails unless the server proves the pinned key.
+  final channel = await PQSecureSocket.connect(
+    InternetAddress.loopbackIPv4,
+    4433,
+    serverKey: identity.publicKey,
+    serverId: 'echo.example',
+  );
+  channel.send(utf8.encode('hello, post-quantum world'));
+  print(utf8.decode((await channel.receive())!)); // hello, post-quantum world
+
+  await channel.close();
+  await channel.receive(); // null: the server has closed its side too
+  await server.close();
+}
+```
+
+In a real deployment, the client gets the server's public key through a
+trusted channel: shipped with the app, or a pinned PEM. It never trusts a
+key the connection itself supplies.
+
+To also authenticate clients, give the server an `authorizeClient` callback,
+and give each client its own `SigningKeyPair`:
+
+```dart
+final server = await PQSecureServer.bind(
+  InternetAddress.anyIPv4, 4433,
+  identity: identity,
+  serverId: 'echo.example',
+  authorizeClient: (clientKey, clientId) => allowedClients.contains(clientKey),
+);
+
+final channel = await PQSecureSocket.connect(
+  'echo.example', 4433,
+  serverKey: pinnedServerKey,
+  serverId: 'echo.example',
+  clientId: 'alice',
+  clientIdentity: aliceKeyPair, // proves alice's key to the server
+);
+```
+
+[`example/secure_socket.dart`](example/secure_socket.dart) shows both,
+including refused connections.
+
+`PQSecureChannel.connect` / `accept` run the same handshake over any
+`Stream<List<int>>` and `StreamSink<List<int>>`, for example a WebSocket.
+`close()` is a half-close. Where closing the sink ends both directions (a
+WebSocket), read until `receive()` returns `null` before closing.
+
+`PQSecureServer` drops a client that does not send each handshake message
+within `stepTimeout` (10 s), whether it stalls before or after its
+ClientHello. It caps idle connections (`maxIdleConnections`) and handshakes
+in progress (`maxPendingHandshakes`) separately, so idle or stalled sockets
+cannot crowd out real clients for long.
+
 ## Keys
 
 ```dart
@@ -338,10 +487,16 @@ Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 `DecryptionFailedException`, `SignatureVerificationException`,
 `SecureRandomUnavailableException`, `UnsupportedPlatformException`,
 `ResourceLimitExceededException`, `PolicyViolationException`,
-`KeyNotFoundException`, `ContextMismatchException` and
-`OperationCancelledException`. After parsing, every authentication failure
-is the same `DecryptionFailedException`, so errors cannot be used as an
-oracle. Messages never contain key material.
+`KeyNotFoundException`, `ContextMismatchException`,
+`OperationCancelledException`, `PQSecureStreamException` and its subclass
+`PQSecureChannelException` (handshake failures). For envelopes, streaming
+encryption and password containers, every authentication failure after
+parsing is the same `DecryptionFailedException`, so errors cannot be used as
+an oracle. Secure streams and channels report failures as
+`PQSecureStreamException`. Their messages name the cause ("Record failed
+authentication", "Stream is not for this key"), and any such failure ends
+the stream, so there is nothing to probe a second time. Messages never
+contain key material.
 
 Two kinds of error pass through unchanged: I/O errors from the file APIs
 (`encryptFile`, `decryptFile`, `signFile`, `FileKeyStorage`, …) surface as
@@ -431,7 +586,7 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
   | X-Wing (draft-connolly-cfrg-xwing-kem) | draft vectors |
   | Symmetric (AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, X25519, Argon2id) | Wycheproof, RFC 7748, RFC 9106 |
 - **Package-specific:** envelope, stream, signed-object, key-record and
-  password containers.
+  password containers, and the secure stream and channel protocols.
 - Test vectors and their provenance are in [test/vectors](test/vectors).
 
 ## Security

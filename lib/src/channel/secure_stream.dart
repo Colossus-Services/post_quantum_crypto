@@ -1,0 +1,687 @@
+/// A post-quantum secure stream: protected messages over any byte stream.
+///
+/// A secure stream carries one direction of messages as numbered AEAD
+/// records. It works over anything that moves bytes: a file, a socket, a
+/// pipe, a message queue, a pair of stream controllers.
+///
+/// ```text
+/// stream  = [header] record* end
+/// frame   = u32 length || body                (every header and record)
+/// record  = type || AEAD(key, nonce = 0^4 || u64 seq,
+///                        aad = label || type, payload)
+/// ```
+///
+/// - Messages keep their boundaries; a message larger than
+///   [PQSecureStream.maxRecordPayload] spans several records.
+/// - The record number is the nonce, and the record type goes into the AAD.
+///   A record that is modified, retyped, replayed, reordered or dropped
+///   fails to decrypt.
+/// - The stream ends with an authenticated End record followed by the end of
+///   the input. A stream that stops early is reported as truncated; data
+///   after the End record is rejected.
+/// - Frame and message sizes are checked before buffering.
+///
+/// One-way streams start with a header that derives a fresh key:
+///
+/// ```text
+/// header = 0x10 || version || mode || u16 aeadId || bytes16 protocol
+///          || (mode 1) u16 kemId || recipientKeyId(32) || KEM ciphertext
+///          || (mode 2) salt(32)
+/// key    = HKDF-SHA-384(ikm = KEM shared secret | shared key,
+///                       info = label || SHA-384(header), 32)
+/// ```
+///
+/// - Mode 1 is to a recipient's public key (ML-KEM or X-Wing), with no round
+///   trip. Use it for files and other store-and-forward data.
+/// - Mode 2 is from a key both ends already share. The random salt gives
+///   every stream a fresh key, so the shared key may be reused.
+///
+/// Replay protection works within a stream. A one-way stream recorded whole
+/// can be delivered again, and it decrypts as before, because nothing ties a
+/// header to the moment it is read. When that matters, the application must
+/// reject it: include a message id or timestamp and remember what it has
+/// seen, or use a `PQSecureChannel`, whose keys are fresh for each
+/// connection.
+///
+/// A `PQSecureChannel` uses two secure streams, one per direction, keyed by
+/// its handshake instead of a header.
+///
+/// A one-way stream is confidential and tamper-evident, but does not say
+/// who wrote it: anyone holding the recipient's public key (or the shared
+/// key) can write one. Sign the content (`signDetached`, `signStream`) or
+/// use a `PQSecureChannel` when the writer must be authenticated.
+library;
+
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:meta/meta.dart';
+
+import '../algorithms/algorithms.dart';
+import '../context.dart';
+import '../encoding/bytes.dart';
+import '../engine.dart';
+import '../errors.dart';
+import '../keys/key_metadata.dart';
+import '../keys/keys.dart';
+import '../providers/primitives.dart';
+import 'framing.dart';
+
+/// Settings for a secure stream. Writer and reader must use the same
+/// [protocol].
+base class PQSecureStreamOptions {
+  /// The application protocol, e.g. `"myapp/backup/v1"`. It is bound into
+  /// the key, so a stream for one protocol cannot be read as another.
+  final String protocol;
+
+  /// The record cipher. The writer chooses it; a reader accepts any AEAD its
+  /// policy allows.
+  final AeadAlgorithm aead;
+
+  /// If set, the longest a reader waits for each frame. A peer that stalls
+  /// longer fails the stream. `null` waits forever.
+  final Duration? receiveTimeout;
+
+  /// The largest message a reader reassembles.
+  final int maxMessageLength;
+
+  const PQSecureStreamOptions({
+    this.protocol = 'post_quantum_crypto/secure-stream',
+    this.aead = AeadAlgorithm.aes256Gcm,
+    this.receiveTimeout,
+    this.maxMessageLength = 16 * 1024 * 1024,
+  });
+}
+
+/// Creates secure streams. See the library documentation for the format.
+abstract final class PQSecureStream {
+  /// The format version.
+  static const version = 1;
+
+  /// The largest frame a reader accepts.
+  static const maxFrameLength = frameLimit;
+
+  /// The largest plaintext in one record; larger messages are split.
+  static const maxRecordPayload = 16 * 1024;
+
+  /// Records per stream before a new stream must be started. This is the
+  /// AES-GCM limit of RFC 8446 §5.5 for full-size records (about 2^24.5).
+  static const maxRecords = 1 << 24;
+
+  static const _header = 0x10;
+  static const _modeRecipient = 1;
+  static const _modeSharedKey = 2;
+  static const _saltLength = 32;
+  static const _minSharedKeyLength = 32;
+  static final _keyLabel = streamLabel;
+
+  /// Starts a stream to [recipient] (ML-KEM or X-Wing) on [output]. Only the
+  /// holder of the matching private key can read it.
+  ///
+  /// [destroy], if given, tears the transport down at once on
+  /// [PQSecureStreamWriter.abort]; otherwise [output] is closed without
+  /// waiting for it to flush.
+  static PQSecureStreamWriter encryptTo(
+    StreamSink<List<int>> output, {
+    required EncryptionPublicKey recipient,
+    PostQuantumCryptoEngine? engine,
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
+    void Function()? destroy,
+  }) {
+    final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
+    final kem = recipient.algorithm;
+    ctx.policy
+      ..checkKem(kem)
+      ..checkAead(options.aead)
+      ..checkKeyMetadata(recipient.metadata, KeyUsage.encrypt);
+    final rnd = ctx.randomBytes(kem.encapsulationRandomLength);
+    final encap = ctx.kem(kem).encapsulate(recipient.bytes, rnd);
+    zeroize(rnd);
+    try {
+      final header = _headerStart(_modeRecipient, options)
+        ..u16(kem.id)
+        ..raw(recipient.keyId.bytes)
+        ..raw(encap.ciphertext);
+      return _startWriter(
+        ctx,
+        output,
+        header.toBytes(),
+        encap.sharedSecret,
+        options,
+        destroy,
+      );
+    } finally {
+      zeroize(encap.sharedSecret);
+    }
+  }
+
+  /// Opens a stream written by [encryptTo] for [privateKey]. Reads the
+  /// header from [input] before returning.
+  ///
+  /// Throws [PQSecureStreamException] if the header is malformed, was written
+  /// for another key or protocol, or uses an AEAD the policy forbids.
+  static Future<PQSecureStreamReader> decryptFrom(
+    Stream<List<int>> input, {
+    required EncryptionPrivateKey privateKey,
+    PostQuantumCryptoEngine? engine,
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
+    void Function()? destroy,
+  }) {
+    final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
+    return _openReader(ctx, input, options, destroy, _modeRecipient, (r) {
+      final kem = KemAlgorithm.fromId(r.u16());
+      final keyId = KeyId(r.fixed(KeyId.length));
+      final enc = r.fixed(kem.ciphertextLength);
+      r.expectEnd();
+      if (kem != privateKey.algorithm || keyId != privateKey.keyId) {
+        throw const PQSecureStreamException('Stream is not for this key');
+      }
+      ctx.policy
+        ..checkKem(kem)
+        ..checkKeyMetadata(privateKey.metadata, KeyUsage.decrypt);
+      return ctx.kem(kem).decapsulate(privateKey.secret, enc);
+    });
+  }
+
+  /// Starts a stream keyed by [sharedKey] (at least 32 bytes, for example a
+  /// session key from `establishHybridKey`). Each stream draws a random
+  /// salt, so the same key can protect many streams.
+  static PQSecureStreamWriter encryptWithKey(
+    StreamSink<List<int>> output, {
+    required List<int> sharedKey,
+    PostQuantumCryptoEngine? engine,
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
+    void Function()? destroy,
+  }) {
+    _checkSharedKey(sharedKey);
+    final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
+    ctx.policy.checkAead(options.aead);
+    final header = _headerStart(_modeSharedKey, options)
+      ..raw(ctx.randomBytes(_saltLength));
+    return _startWriter(
+      ctx,
+      output,
+      header.toBytes(),
+      Uint8List.fromList(sharedKey),
+      options,
+      destroy,
+    );
+  }
+
+  /// Opens a stream written by [encryptWithKey] with the same [sharedKey].
+  /// A wrong key shows as [PQSecureStreamException] on the first record.
+  static Future<PQSecureStreamReader> decryptWithKey(
+    Stream<List<int>> input, {
+    required List<int> sharedKey,
+    PostQuantumCryptoEngine? engine,
+    PQSecureStreamOptions options = const PQSecureStreamOptions(),
+    void Function()? destroy,
+  }) {
+    _checkSharedKey(sharedKey);
+    final ctx = (engine ?? PostQuantumCryptoEngine()).ctx;
+    return _openReader(ctx, input, options, destroy, _modeSharedKey, (r) {
+      r.fixed(_saltLength);
+      r.expectEnd();
+      return Uint8List.fromList(sharedKey);
+    });
+  }
+
+  static void _checkSharedKey(List<int> key) {
+    if (key.length < _minSharedKeyLength) {
+      throw const InvalidInputException('Shared key must be >= 32 bytes');
+    }
+  }
+
+  static ByteWriter _headerStart(int mode, PQSecureStreamOptions options) =>
+      ByteWriter()
+        ..u8(_header)
+        ..u8(version)
+        ..u8(mode)
+        ..u16(options.aead.id)
+        ..bytes16(utf8Bytes(options.protocol));
+
+  static PQSecureStreamWriter _startWriter(
+    CryptoContext ctx,
+    StreamSink<List<int>> output,
+    Uint8List header,
+    Uint8List ikm,
+    PQSecureStreamOptions options,
+    void Function()? destroy,
+  ) {
+    final key = _deriveKey(ctx, ikm, header);
+    writeFrame(output, header);
+    return PQSecureStreamWriter.internal(
+      ctx.aead(options.aead),
+      key,
+      output,
+      destroy,
+    );
+  }
+
+  static Future<PQSecureStreamReader> _openReader(
+    CryptoContext ctx,
+    Stream<List<int>> input,
+    PQSecureStreamOptions options,
+    void Function()? destroy,
+    int mode,
+    Uint8List Function(ByteReader r) keyMaterial,
+  ) async {
+    final frames = FrameReader(input);
+    try {
+      final next = frames.require();
+      final timeout = options.receiveTimeout;
+      final header = await (timeout == null
+          ? next
+          : next.timeout(timeout, onTimeout: _timedOut));
+      final (aead, ikm) = parseStreamMessage(header, (r) {
+        if (r.u8() != _header) malformedStream();
+        if (r.u8() != version) {
+          throw const PQSecureStreamException('Unsupported stream version');
+        }
+        if (r.u8() != mode) {
+          throw const PQSecureStreamException('Unexpected stream key mode');
+        }
+        final aead = AeadAlgorithm.fromId(r.u16());
+        if (utf8String(r.bytes16()) != options.protocol) {
+          throw const PQSecureStreamException('Application protocol mismatch');
+        }
+        ctx.policy.checkAead(aead);
+        return (aead, keyMaterial(r));
+      });
+      final key = _deriveKey(ctx, ikm, header);
+      return PQSecureStreamReader.internal(
+        ctx.aead(aead),
+        key,
+        frames,
+        options,
+        destroy: destroy,
+      );
+    } catch (e) {
+      await teardown(frames, null, destroy);
+      throw asStreamError(e, 'Cannot open stream');
+    }
+  }
+
+  static Never _timedOut() =>
+      throw const PQSecureStreamException('Receive timed out');
+
+  /// Derives the record key, and zeroes [ikm].
+  static Uint8List _deriveKey(
+    CryptoContext ctx,
+    Uint8List ikm,
+    Uint8List header,
+  ) {
+    final kdf = ctx.hkdfSha384;
+    final prk = kdf.extract(null, ikm);
+    zeroize(ikm);
+    try {
+      return kdf.expand(
+        prk,
+        (ByteWriter()
+              ..raw(_keyLabel)
+              ..raw(ctx.sha384(header)))
+            .toBytes(),
+        32,
+      );
+    } finally {
+      zeroize(prk);
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Records
+// -----------------------------------------------------------------------------
+
+/// Record types.
+@internal
+abstract final class RecordType {
+  static const finished = 0x14;
+  static const end = 0x15;
+  static const clientAuth = 0x16;
+
+  /// The last (or only) fragment of a message.
+  static const data = 0x17;
+
+  /// A fragment with more of the same message to follow.
+  static const dataMore = 0x18;
+
+  static final Map<int, Uint8List> aads = {
+    for (final t in [finished, end, clientAuth, data, dataMore])
+      t:
+          (ByteWriter()
+                ..raw(streamLabel)
+                ..u8(t))
+              .toBytes(),
+  };
+}
+
+Uint8List _nonce(int seq) =>
+    (ByteWriter()
+          ..u32(0)
+          ..u64(seq))
+        .toBytes();
+
+/// The writing end of a secure stream.
+///
+/// [add] queues each message on the output as one or more records; [close]
+/// writes the End record and closes the output.
+final class PQSecureStreamWriter {
+  final AeadCipher _cipher;
+  final Uint8List _key;
+  final StreamSink<List<int>> _output;
+  final void Function()? _destroy;
+  int _seq = 0;
+  bool _closed = false;
+  bool _failed = false;
+  Future<void>? _closing;
+
+  @internal
+  PQSecureStreamWriter.internal(
+    this._cipher,
+    this._key,
+    this._output,
+    this._destroy,
+  );
+
+  /// Whether [add] may still be called.
+  bool get isOpen => !_closed && !_failed;
+
+  /// Writes [message], split into records of at most
+  /// [PQSecureStream.maxRecordPayload] bytes.
+  ///
+  /// Throws [StateError] after [close] or [abort], or if [message] does not
+  /// fit in the records left before [PQSecureStream.maxRecords]. Nothing is
+  /// written in that case, and [close] still ends the stream cleanly (the
+  /// last record is kept for End).
+  void add(List<int> message) {
+    if (!isOpen) throw StateError('Stream is closed');
+    final bytes = message is Uint8List ? message : Uint8List.fromList(message);
+    final records = bytes.isEmpty
+        ? 1
+        : (bytes.length + PQSecureStream.maxRecordPayload - 1) ~/
+              PQSecureStream.maxRecordPayload;
+    if (_seq + records > PQSecureStream.maxRecords - 1) {
+      throw StateError('Record limit reached; start a new stream');
+    }
+    var offset = 0;
+    do {
+      final end = bytes.length - offset > PQSecureStream.maxRecordPayload
+          ? offset + PQSecureStream.maxRecordPayload
+          : bytes.length;
+      writeRecord(
+        end == bytes.length ? RecordType.data : RecordType.dataMore,
+        Uint8List.sublistView(bytes, offset, end),
+      );
+      offset = end;
+    } while (offset < bytes.length);
+  }
+
+  /// Writes every message of [messages], then [close]s.
+  ///
+  /// If [messages] errors or a message cannot be written, the writer is
+  /// aborted (the reader sees a truncated stream) and the error rethrown.
+  Future<void> addStream(Stream<List<int>> messages) async {
+    try {
+      await for (final m in messages) {
+        add(m);
+      }
+    } catch (_) {
+      await abort();
+      rethrow;
+    }
+    await close();
+  }
+
+  /// Writes the End record and closes the output, waiting for it to flush.
+  /// Safe to call more than once. Throws [PQSecureStreamException] if the
+  /// output fails to close (for a file, a write error): the stream may then
+  /// be incomplete.
+  ///
+  /// The returned future completes when the output's own `close()` does:
+  /// for a file or socket once the data is written, for an in-memory
+  /// `StreamController` once its listener has received everything. Don't
+  /// await it before reading the other end of such a pipe.
+  ///
+  /// Concurrent and repeated calls share the first call's result, so every
+  /// caller sees a close error.
+  Future<void> close() {
+    final closing = _closing;
+    if (closing != null) return closing;
+    if (_failed) return Future.value();
+    return _closing = _close();
+  }
+
+  Future<void> _close() async {
+    _closed = true;
+    try {
+      writeRecord(RecordType.end, Uint8List(0));
+      await _output.close();
+    } catch (e) {
+      // A file that could not be written must not look complete.
+      throw asStreamError(e, 'Cannot close output');
+    } finally {
+      zeroize(_key);
+    }
+  }
+
+  /// Marks the writer failed without touching the output, for when the
+  /// transport was already torn down (by the reading side of a channel).
+  @internal
+  void markFailed() {
+    _failed = true;
+    zeroize(_key);
+  }
+
+  /// Drops the output at once, without an End record: the reader sees a
+  /// truncated stream.
+  Future<void> abort() async {
+    if (_failed) return;
+    _failed = true;
+    zeroize(_key);
+    if (!_closed) await teardown(null, _output, _destroy);
+  }
+
+  /// Writes one record of [type]. The last record number is kept for End.
+  @internal
+  void writeRecord(int type, Uint8List payload) {
+    final limit = type == RecordType.end
+        ? PQSecureStream.maxRecords
+        : PQSecureStream.maxRecords - 1;
+    if (_seq >= limit) {
+      throw StateError('Record limit reached; start a new stream');
+    }
+    final sealed = _cipher.seal(
+      _key,
+      _nonce(_seq++),
+      payload,
+      RecordType.aads[type]!,
+    );
+    final frame = Uint8List(5 + sealed.length)
+      ..buffer.asByteData().setUint32(0, 1 + sealed.length)
+      ..[4] = type
+      ..setRange(5, 5 + sealed.length, sealed);
+    _output.add(frame);
+  }
+}
+
+/// The reading end of a secure stream.
+final class PQSecureStreamReader {
+  final AeadCipher _cipher;
+  final Uint8List _key;
+  final FrameReader _frames;
+  final Duration? _receiveTimeout;
+  final int _maxMessageLength;
+  final void Function()? _destroy;
+  final StreamSink<List<int>>? _output;
+  int _seq = 0;
+  bool _reading = false;
+  bool _ended = false;
+  bool _failed = false;
+  bool _cancelled = false;
+  final void Function()? _onFailure;
+
+  @internal
+  PQSecureStreamReader.internal(
+    this._cipher,
+    this._key,
+    this._frames,
+    PQSecureStreamOptions options, {
+    void Function()? destroy,
+    StreamSink<List<int>>? output,
+    void Function()? onFailure,
+  }) : _receiveTimeout = options.receiveTimeout,
+       _maxMessageLength = options.maxMessageLength,
+       _destroy = destroy,
+       _output = output,
+       _onFailure = onFailure;
+
+  /// Whether the End record has been read.
+  bool get isDone => _ended;
+
+  /// Returns the next message, or `null` at the authenticated end of the
+  /// stream.
+  ///
+  /// Throws [PQSecureStreamException] if the stream was tampered with, ended
+  /// without an End record, carried data after it, stalled past
+  /// `receiveTimeout` or held a message over `maxMessageLength`; the input
+  /// is closed in that case. Throws [StateError] once the stream has failed
+  /// or been cancelled, or if another [read] is in progress.
+  Future<Uint8List?> read() async {
+    if (_failed) throw StateError('Stream has failed or was cancelled');
+    if (_ended) return null;
+    if (_reading) throw StateError('read() is already in progress');
+    _reading = true;
+    try {
+      final message = BytesBuilder(copy: false);
+      while (true) {
+        final (type, payload) = await readRecord();
+        switch (type) {
+          case RecordType.data || RecordType.dataMore:
+            if (message.length + payload.length > _maxMessageLength) {
+              throw const PQSecureStreamException('Message too long');
+            }
+            message.add(payload);
+            if (type == RecordType.data) return message.takeBytes();
+          case RecordType.end when message.isEmpty && payload.isEmpty:
+            if (await _nextFrame() != null) {
+              throw const PQSecureStreamException('Data after end of stream');
+            }
+            _ended = true;
+            zeroize(_key);
+            return null;
+          default:
+            throw const PQSecureStreamException('Unexpected record');
+        }
+      }
+    } catch (e) {
+      throw await _failWith(e);
+    } finally {
+      _reading = false;
+    }
+  }
+
+  /// The remaining messages, until the end of the stream. Errors are those
+  /// of [read]. Listen at most once.
+  Stream<Uint8List> get messages async* {
+    for (Uint8List? m; (m = await read()) != null;) {
+      yield m!;
+    }
+  }
+
+  /// Stops reading and closes the input. A pending [read] fails with
+  /// [PQSecureStreamException].
+  Future<void> cancel() async {
+    _cancelled = true;
+    await _fail();
+  }
+
+  /// Reads and decrypts one record.
+  @internal
+  Future<(int, Uint8List)> readRecord() async {
+    final frame = await _nextFrame();
+    if (frame == null) throw truncatedStream;
+    final type = frame[0];
+    final aad = RecordType.aads[type];
+    final plaintext = aad == null
+        ? null
+        : _cipher.open(
+            _key,
+            _nonce(_seq),
+            Uint8List.sublistView(frame, 1),
+            aad,
+          );
+    if (plaintext == null) {
+      throw const PQSecureStreamException('Record failed authentication');
+    }
+    _seq++;
+    return (type, plaintext);
+  }
+
+  Future<PQSecureStreamException> _failWith(Object e) async {
+    if (_cancelled) {
+      return const PQSecureStreamException('Stream was cancelled locally');
+    }
+    // A stream with a gap in it must not be read further.
+    await _fail();
+    return asStreamError(e, 'Stream failed');
+  }
+
+  Future<Uint8List?> _nextFrame() {
+    final next = _frames.next();
+    final timeout = _receiveTimeout;
+    return timeout == null
+        ? next
+        : next.timeout(timeout, onTimeout: PQSecureStream._timedOut);
+  }
+
+  Future<void> _fail() async {
+    if (_failed) return;
+    _failed = true;
+    zeroize(_key);
+    // In a channel the output is shared: its writer must stop too.
+    _onFailure?.call();
+    await teardown(_frames, _output, _destroy);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Shared helpers
+// -----------------------------------------------------------------------------
+
+/// Parses a header or handshake message strictly; any structural problem is
+/// a [PQSecureStreamException] (or the more specific error thrown by [parse]).
+///
+/// [malformed] throws the error for a structural problem; it defaults to
+/// [malformedStream].
+@internal
+T parseStreamMessage<T>(
+  Uint8List data,
+  T Function(ByteReader r) parse, {
+  Never Function() malformed = malformedStream,
+}) {
+  try {
+    return parseStrict(() => parse(ByteReader(data)));
+  } on MalformedDataException {
+    malformed();
+  }
+}
+
+/// The domain label of the secure stream: the HKDF label of one-way stream
+/// keys and the prefix of every record's AAD.
+@internal
+final Uint8List streamLabel = utf8Bytes('post_quantum_crypto/v1/secure-stream');
+
+@internal
+Never malformedStream() =>
+    throw const PQSecureStreamException('Malformed stream header');
+
+/// [e] as a [PQSecureStreamException], prefixing library errors with [what].
+@internal
+PQSecureStreamException asStreamError(Object e, String what) => switch (e) {
+  PQSecureStreamException() => e,
+  PostQuantumCryptoException(:final message) => PQSecureStreamException(
+    '$what: $message',
+  ),
+  _ => PQSecureStreamException('$what (${e.runtimeType})'),
+};

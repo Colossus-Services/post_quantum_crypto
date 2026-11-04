@@ -1,3 +1,121 @@
+## 2.3.0
+
+### Added
+
+Three layers of protected messaging, each built on the one before.
+
+- **`PQSecureStream`: protected messages over any byte stream.** It works
+  over a file, a socket, a pipe or a message queue, and runs in browsers.
+  - One direction of messages as numbered AEAD records (AES-256-GCM or
+    ChaCha20-Poly1305). Messages keep their boundaries and are sent as soon
+    as they are added.
+  - Within a stream, tampered, retyped, replayed, reordered and dropped
+    records fail to decrypt. An authenticated End record reveals
+    truncation, and data after it is rejected. A one-way stream replayed
+    whole still decrypts; applications that care add message ids.
+  - The last record number is kept for End, so a writer at the record
+    limit can still close cleanly. A message that would not fit is refused
+    before any of it is written.
+  - Frames (64 KiB) and messages (`maxMessageLength`) are bounded before
+    buffering, and reading stays linear however finely the input is
+    split. An optional `receiveTimeout` drops a stalled writer.
+  - `encryptTo` / `decryptFrom` key a stream to a recipient's ML-KEM or
+    X-Wing key, with no round trip (files, store-and-forward).
+    `encryptWithKey` / `decryptWithKey` key it from a shared key, with a
+    per-stream salt so the key can be reused.
+  - `PQSecureStreamWriter.close` reports an output that fails to close (a
+    write error), so an incomplete file never looks complete. Repeated and
+    concurrent calls share the first call's result. `addStream` aborts the
+    writer if its source fails.
+  - Headers and handshake messages over the 64 KiB frame limit (an
+    overlong protocol name or client id) are refused when written, not
+    discovered by the reader.
+- **`PQSecureChannel`: an authenticated two-way channel over any byte
+  stream.** Each direction is a `PQSecureStream` (`channel.output` /
+  `channel.input`).
+  - The server signs a fresh X-Wing key, generated for each connection,
+    with its ML-DSA (or SLH-DSA) identity key, which the client has
+    pinned. A man-in-the-middle cannot substitute its own key, and
+    recorded traffic stays secret if the identity key later leaks (forward
+    secrecy).
+  - Optional client authentication: the server sets a signed flag, and
+    the client proves its own key inside an encrypted record, so passive
+    observers do not see which key connected. The `clientId` label itself
+    is sent in the clear. A `ClientAuthorizer` callback decides whether
+    that key may connect.
+  - The session keys are bound to the application `protocol`, both ids and
+    the hello transcript, and confirmed by Finished records. The ephemeral
+    key is destroyed after the handshake.
+  - The handshake has a timeout. A handshake given up on (timed out or
+    failed) stops at its next step, so a slow authorizer cannot sign or
+    key a channel nobody holds.
+  - `close` is a half-close; `abort` drops the connection at once. On a
+    transport where closing the sink ends both directions (a WebSocket),
+    read to the end before closing.
+  - A failed read stops the channel's sending side too, since they share
+    the transport.
+- **`PQSecureSocket` / `PQSecureServer`** (`post_quantum_crypto_io`):
+  `PQSecureChannel` over TCP.
+  - The server delivers established channels on `channels` and reports
+    refused handshakes to `onHandshakeError`.
+  - Connection limits:
+    - A client must send each handshake message within `stepTimeout`
+      (10 s), before or after its ClientHello, or it is dropped.
+    - `maxIdleConnections` caps connections still waiting for their
+      ClientHello.
+    - `maxPendingHandshakes` caps handshakes past it, where signing starts;
+      one more ClientHello is refused as busy. A slot is held until the
+      handshake's work really stops, including a slow `authorizeClient`.
+
+    Idle or stalled sockets therefore cannot crowd out real clients for
+    long, and a flood cannot make the server sign without limit.
+  - Neither a throwing `onHandshakeError` callback nor an accept error
+    (such as running out of file descriptors) crashes the server.
+    `close()` completes even if nobody listens to `channels`.
+- **`PQSecureStreamException`** (stream and channel failures) and its
+  subclass **`PQSecureChannelException`** (handshake failures).
+
+These are package-specific protocols, not TLS.
+
+### Documentation
+
+- New examples: `example/secure_stream.dart` (an append-style encrypted
+  file, truncation detection, a live pipe with a shared key) and
+  `example/secure_socket.dart` (an echo server with client
+  authentication).
+- README: a "Secure streams and channels" section.
+
+### Tests
+
+- `secure_stream_test.dart` covers:
+  - recipient (ML-KEM-768, X-Wing) and shared-key streams;
+  - wrong key, protocol or key mode;
+  - a modified header or record, reordering, truncation, data after the
+    end;
+  - AEAD policy, the size limit, the receive timeout, cancel, abort, a
+    failing output, concurrent close, a source error in `addStream` and
+    live pipes.
+- `secure_channel_test.dart` runs the channel through an in-memory wire
+  that acts as a man-in-the-middle:
+  - handshake: unpinned identity, wrong server id, a substituted ephemeral
+    key, modified hello / signature / key exchange / flags, version, AEAD
+    and protocol mismatches, malformed and trailing data, an oversized
+    hello, a client stalling after its hello, timeout;
+  - client authentication: authorized, unauthorized, a throwing or async
+    authorizer, a missing identity, stripped flags, a dropped ClientAuth,
+    and a handshake abandoned on timeout that writes nothing more;
+  - records: tampered, retyped, replayed, reordered, dropped and reflected
+    records, truncation, mid-frame EOF, oversized and empty frames,
+    half-close, abort, and a failed read stopping the sender.
+- `secure_socket_test.dart` covers:
+  - TCP echo with several clients, client authorization, an unpinned
+    server and server close;
+  - idle sockets that do not block handshakes, the busy refusal,
+    `maxIdleConnections`, `stepTimeout`, a throwing `onHandshakeError`,
+    and `close()` with no listener or a paused one;
+  - a `PQSecureStream` file round trip and truncation.
+- `test/browser` runs a stream and a channel under dart2js and dart2wasm.
+
 ## 2.2.1
 
 ### Security

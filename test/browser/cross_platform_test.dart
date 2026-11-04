@@ -10,6 +10,7 @@
 @Tags(['browser'])
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:post_quantum_crypto/post_quantum_crypto.dart';
@@ -246,6 +247,67 @@ void main() {
 
     test('secure random is available', () {
       expect(SystemSecureRandom.instance.nextBytes(16), hasLength(16));
+    });
+  });
+
+  // No dart:io and no 64-bit ByteData calls: these run under dart2js and
+  // dart2wasm too (for example over a WebSocket).
+  group('secure streams and channels', () {
+    test('a secure stream round-trips through a pipe', () async {
+      final recipient = engine.generateEncryptionKeyPair();
+      final pipe = StreamController<List<int>>();
+      final writer = PQSecureStream.encryptTo(
+        pipe.sink,
+        recipient: recipient.publicKey,
+        engine: engine,
+      );
+      final big = Uint8List.fromList(List.generate(40000, (i) => i % 256));
+      writer
+        ..add([1, 2, 3])
+        ..add(big);
+      final closing = writer.close();
+      final reader = await PQSecureStream.decryptFrom(
+        pipe.stream,
+        privateKey: recipient.privateKey,
+        engine: engine,
+      );
+      expect(await reader.messages.toList(), [
+        [1, 2, 3],
+        big,
+      ]);
+      await closing;
+    });
+
+    test('a secure channel connects and exchanges messages', () async {
+      final identity = engine.generateSigningKeyPair();
+      final toServer = StreamController<List<int>>();
+      final toClient = StreamController<List<int>>();
+      final server = PQSecureChannel.accept(
+        toServer.stream,
+        toClient.sink,
+        identity: identity,
+        serverId: 'server',
+        engine: engine,
+      );
+      final client = await PQSecureChannel.connect(
+        toClient.stream,
+        toServer.sink,
+        serverKey: identity.publicKey,
+        serverId: 'server',
+        engine: engine,
+      );
+      final s = await server;
+      client.send([42]);
+      expect(await s.receive(), [42]);
+      s.send([7]);
+      expect(await client.receive(), [7]);
+      // Over in-memory pipes, close() completes once the other end reads.
+      final clientClosing = client.close();
+      expect(await s.receive(), isNull);
+      await clientClosing;
+      final serverClosing = s.close();
+      expect(await client.receive(), isNull);
+      await serverClosing;
     });
   });
 }
