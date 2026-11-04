@@ -98,12 +98,17 @@ final class PQSecureServer {
   /// Two limits keep a flood of connections from exhausting the server:
   ///
   /// - [maxIdleConnections] caps connections that have not yet sent a
-  ///   ClientHello. Each is dropped after `options.helloTimeout`, and
-  ///   connections over the cap are closed at once. Idle connections cost
-  ///   only a socket.
+  ///   ClientHello. Connections over the cap are closed at once. Idle
+  ///   connections cost only a socket.
   /// - [maxPendingHandshakes] caps handshakes past the ClientHello, the
   ///   point where the server starts signing. A ClientHello over the cap is
   ///   refused as busy.
+  ///
+  /// The client must send each handshake message within
+  /// `options.stepTimeout` (10 s by default). A client that goes silent,
+  /// before or after its ClientHello, therefore frees its slot quickly. A
+  /// slot is held until the handshake's work really stops, including a
+  /// slow `authorizeClient`.
   ///
   /// [onHandshakeError] receives every refused handshake; an error it throws
   /// is ignored. The other parameters are those of [PQSecureChannel.accept].
@@ -150,6 +155,9 @@ final class PQSecureServer {
         options: options,
         onHandshakeError: onHandshakeError,
       ),
+      // An accept error (for example EMFILE under a connection flood) must
+      // not crash the process: the listener keeps accepting.
+      onError: (Object _) {},
       onDone: () => unawaited(channels.close()),
     );
     channels.onCancel = server.close;
@@ -167,9 +175,13 @@ final class PQSecureServer {
   Stream<PQSecureChannel> get channels => _channels.stream;
 
   /// Stops accepting connections. Channels already delivered stay open.
+  ///
+  /// Completes once the listening socket is closed. It does not wait for
+  /// [channels] to be drained: nobody may be listening, or the listener may
+  /// be paused handling a channel.
   Future<void> close() async {
     await _socket.close();
-    if (!_channels.isClosed) await _channels.close();
+    if (!_channels.isClosed) unawaited(_channels.close());
   }
 
   void _handshake(
@@ -189,47 +201,48 @@ final class PQSecureServer {
     _idle++;
     var helloSeen = false;
     PQSecureChannel.acceptInternal(
-          socket,
-          socket,
-          identity: identity,
-          serverId: serverId,
-          authorizeClient: authorizeClient,
-          engine: engine,
-          options: options,
-          destroy: socket.destroy,
-          onHello: () {
-            if (_pending >= _maxPendingHandshakes) return false;
-            helloSeen = true;
-            _idle--;
-            _pending++;
-            return true;
-          },
-        )
-        .then(
-          (channel) {
-            if (_channels.isClosed) {
-              unawaited(channel.abort());
-            } else {
-              _channels.add(channel);
-            }
-          },
-          onError: (Object e) {
-            if (e is! PQSecureChannelException || onHandshakeError == null) {
-              return;
-            }
-            try {
-              onHandshakeError(e);
-            } catch (_) {
-              // A failing error callback must not take the server down.
-            }
-          },
-        )
-        .whenComplete(() {
-          if (helloSeen) {
-            _pending--;
-          } else {
-            _idle--;
-          }
-        });
+      socket,
+      socket,
+      identity: identity,
+      serverId: serverId,
+      authorizeClient: authorizeClient,
+      engine: engine,
+      options: options,
+      destroy: socket.destroy,
+      onHello: () {
+        if (_pending >= _maxPendingHandshakes) return false;
+        helloSeen = true;
+        _idle--;
+        _pending++;
+        return true;
+      },
+      // Free the slot only when the handshake's work has stopped: a
+      // timed-out handshake may still be in a slow authorizer.
+      onSettled: () {
+        if (helloSeen) {
+          _pending--;
+        } else {
+          _idle--;
+        }
+      },
+    ).then(
+      (channel) {
+        if (_channels.isClosed) {
+          unawaited(channel.abort());
+        } else {
+          _channels.add(channel);
+        }
+      },
+      onError: (Object e) {
+        if (e is! PQSecureChannelException || onHandshakeError == null) {
+          return;
+        }
+        try {
+          onHandshakeError(e);
+        } catch (_) {
+          // A failing error callback must not take the server down.
+        }
+      },
+    );
   }
 }

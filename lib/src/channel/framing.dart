@@ -24,8 +24,17 @@ const truncatedStream = PQSecureStreamException(
 );
 
 /// Writes [body] as one frame (a single `add`).
+///
+/// Throws [InvalidInputException] if [body] is over [frameLimit]: every
+/// reader would reject it, so fail here, where the cause (an overlong
+/// protocol name or client id) is visible.
 @internal
 void writeFrame(StreamSink<List<int>> output, Uint8List body) {
+  if (body.length > frameLimit) {
+    throw const InvalidInputException(
+      'Frame over 64 KiB: protocol, id or key too long',
+    );
+  }
   final frame = Uint8List(4 + body.length)
     ..buffer.asByteData().setUint32(0, body.length)
     ..setRange(4, 4 + body.length, body);

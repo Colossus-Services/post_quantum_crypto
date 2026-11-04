@@ -217,7 +217,7 @@ void main() {
       maxIdleConnections: 1,
       serverOptions: const PQSecureChannelOptions(
         protocol: 'test/echo/v1',
-        helloTimeout: Duration(milliseconds: 200),
+        stepTimeout: Duration(milliseconds: 200),
       ),
     );
     final idle = await Socket.connect(server.address, server.port);
@@ -248,6 +248,43 @@ void main() {
     channel.send([2]);
     expect(await channel.receive(), [2]);
     await channel.close();
+  });
+
+  test('close completes when nobody listens to channels', () async {
+    final server = await PQSecureServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+      identity: identity,
+      serverId: serverId,
+      engine: engine,
+    );
+    await server.close().timeout(const Duration(seconds: 5));
+  });
+
+  test('close completes while a channel is being handled', () async {
+    final server = await PQSecureServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+      identity: identity,
+      serverId: serverId,
+      engine: engine,
+      options: options,
+    );
+    final handling = Completer<void>();
+    final done = Completer<void>();
+    // `await for` pauses the subscription while a channel is handled.
+    unawaited(() async {
+      await for (final channel in server.channels) {
+        handling.complete();
+        await done.future;
+        await channel.abort();
+      }
+    }());
+    final client = await connect(server);
+    await handling.future;
+    await server.close().timeout(const Duration(seconds: 5));
+    done.complete();
+    await client.abort();
   });
 
   test('the connection limits must be positive', () async {

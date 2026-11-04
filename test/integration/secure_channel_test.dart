@@ -389,6 +389,46 @@ void main() {
       );
     });
 
+    test('a client stalling after its ClientHello is dropped', () async {
+      // Nothing after the ClientHello arrives.
+      final w = Wire(fromClient: (i, f) => i == 0 ? [f] : []);
+      final server = startServer(
+        w,
+        options: const PQSecureChannelOptions(
+          protocol: 'test/v1',
+          stepTimeout: Duration(milliseconds: 200),
+        ),
+      );
+      final client = startClient(
+        w,
+        options: const PQSecureChannelOptions(
+          protocol: 'test/v1',
+          handshakeTimeout: Duration(seconds: 5),
+        ),
+      );
+      await Future.wait([
+        expectLater(server, handshakeError('KeyExchange timed out')),
+        expectLater(client, handshakeError()),
+      ]);
+    });
+
+    test('an oversized ClientHello is refused before sending', () async {
+      final w = Wire();
+      await expectLater(
+        PQSecureChannel.connect(
+          w.toClient.stream,
+          w.clientOut,
+          serverKey: identity.publicKey,
+          serverId: serverId,
+          clientId: 'x' * 40000,
+          engine: engine,
+          options: PQSecureChannelOptions(protocol: 'p' * 30000),
+        ),
+        handshakeError('Frame over 64 KiB'),
+      );
+      expect(w.clientFrames, isEmpty);
+    });
+
     test('a silent peer times out', () async {
       final w = Wire();
       w.toServer.stream.listen((_) {}); // nobody answers
@@ -796,6 +836,19 @@ void main() {
       await server.close();
       expect(utf8.decode((await client.receive())!), 'late reply');
       expect(await client.receive(), isNull);
+    });
+
+    test('a failed read stops the channel from sending', () async {
+      final (client, server) = await connect(
+        Wire(fromClient: (i, f) => i == 3 ? flipAt(f, f.length - 1) : [f]),
+      );
+      client.send([1]);
+      // Read through the stream directly, not through receive().
+      await expectLater(server.input.read(), channelError('Record failed'));
+      expect(server.canSend, isFalse);
+      expect(() => server.send([2]), throwsStateError);
+      await server.close(); // no error: the writer is already stopped
+      await client.abort();
     });
 
     test('abort is seen by the peer as truncation', () async {

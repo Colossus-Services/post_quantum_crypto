@@ -432,6 +432,38 @@ void main() {
       expect(writer.isOpen, isFalse);
     });
 
+    test('concurrent close calls all see the close error', () async {
+      final writer = toRecipient(_FailingSink());
+      final first = writer.close();
+      final second = writer.close();
+      await expectLater(first, streamError('Cannot close output'));
+      await expectLater(second, streamError('Cannot close output'));
+    });
+
+    test('closing over an already-closed output is reported', () async {
+      final sink = StreamController<List<int>>()..stream.listen((_) {});
+      final writer = toRecipient(sink);
+      await sink.close();
+      await expectLater(writer.close(), streamError('Cannot close output'));
+      expect(writer.isOpen, isFalse);
+    });
+
+    test('addStream aborts the writer when the source fails', () async {
+      final out = Captured();
+      final writer = toRecipient(out.sink);
+      final source = StreamController<List<int>>();
+      final adding = writer.addStream(source.stream);
+      source
+        ..add(utf8.encode('kept'))
+        ..addError(const FormatException('source broke'));
+      await expectLater(adding, throwsFormatException);
+      expect(writer.isOpen, isFalse);
+      await out.done;
+      final reader = await fromRecipient(out.replay());
+      expect(utf8.decode((await reader.read())!), 'kept');
+      await expectLater(reader.read(), streamError('truncated'));
+    });
+
     test('an aborted writer leaves a truncated stream', () async {
       final out = Captured();
       final writer = toRecipient(out.sink)..add(utf8.encode('partial'));

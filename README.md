@@ -324,10 +324,14 @@ Future<void> main() async {
     serverId: 'echo.example',
   );
   server.channels.listen((channel) async {
-    await for (final message in channel.messages) {
-      channel.send(message);
+    try {
+      await for (final message in channel.messages) {
+        channel.send(message);
+      }
+      await channel.close();
+    } on PQSecureStreamException {
+      await channel.abort(); // a misbehaving client must not stop the server
     }
-    await channel.close();
   });
 
   // Client: the handshake fails unless the server proves the pinned key.
@@ -378,10 +382,11 @@ including refused connections.
 `close()` is a half-close. Where closing the sink ends both directions (a
 WebSocket), read until `receive()` returns `null` before closing.
 
-`PQSecureServer` drops connections that send no ClientHello within
-`helloTimeout`. It caps idle connections (`maxIdleConnections`) and
-handshakes in progress (`maxPendingHandshakes`) separately, so idle sockets
-cannot crowd out real clients.
+`PQSecureServer` drops a client that does not send each handshake message
+within `stepTimeout` (10 s), whether it stalls before or after its
+ClientHello. It caps idle connections (`maxIdleConnections`) and handshakes
+in progress (`maxPendingHandshakes`) separately, so idle or stalled sockets
+cannot crowd out real clients for long.
 
 ## Keys
 
@@ -484,9 +489,14 @@ Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 `ResourceLimitExceededException`, `PolicyViolationException`,
 `KeyNotFoundException`, `ContextMismatchException`,
 `OperationCancelledException`, `PQSecureStreamException` and its subclass
-`PQSecureChannelException` (handshake failures). After parsing, every authentication failure
-is the same `DecryptionFailedException`, so errors cannot be used as an
-oracle. Messages never contain key material.
+`PQSecureChannelException` (handshake failures). For envelopes, streaming
+encryption and password containers, every authentication failure after
+parsing is the same `DecryptionFailedException`, so errors cannot be used as
+an oracle. Secure streams and channels report failures as
+`PQSecureStreamException`. Their messages name the cause ("Record failed
+authentication", "Stream is not for this key"), and any such failure ends
+the stream, so there is nothing to probe a second time. Messages never
+contain key material.
 
 Two kinds of error pass through unchanged: I/O errors from the file APIs
 (`encryptFile`, `decryptFile`, `signFile`, `FileKeyStorage`, …) surface as

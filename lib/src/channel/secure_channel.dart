@@ -67,10 +67,12 @@ final class PQSecureChannelOptions extends PQSecureStreamOptions {
   /// The longest a handshake may take.
   final Duration handshakeTimeout;
 
-  /// On the server, the longest it waits for the ClientHello. A connection
-  /// that sends nothing is dropped after this, well before
-  /// [handshakeTimeout].
-  final Duration helloTimeout;
+  /// On the server, the longest it waits for each of the client's handshake
+  /// messages (ClientHello, KeyExchange, ClientAuth, Finished). A client
+  /// that sends nothing, or stops partway, is dropped after this, well
+  /// before [handshakeTimeout], so it cannot hold server resources for
+  /// long.
+  final Duration stepTimeout;
 
   const PQSecureChannelOptions({
     super.protocol = 'post_quantum_crypto/secure-channel',
@@ -78,7 +80,7 @@ final class PQSecureChannelOptions extends PQSecureStreamOptions {
     super.receiveTimeout,
     super.maxMessageLength,
     this.handshakeTimeout = const Duration(seconds: 30),
-    this.helloTimeout = const Duration(seconds: 10),
+    this.stepTimeout = const Duration(seconds: 10),
   });
 }
 
@@ -136,34 +138,52 @@ final class PQSecureChannel {
 
   SigningPublicKey? _peerKey;
 
-  PQSecureChannel._(
-    CryptoContext ctx,
+  PQSecureChannel._parts(
+    this.output,
+    this.input,
     this.aead,
+    this.protocol,
+    this.peerId,
+    this._peerKey,
+  );
+
+  factory PQSecureChannel._(
+    CryptoContext ctx,
+    AeadAlgorithm aead,
     PQSecureStreamOptions options,
     FrameReader frames,
     StreamSink<List<int>> sink,
     void Function()? destroy,
     Uint8List sessionKey, {
     required bool isClient,
-    required this.peerId,
+    required String peerId,
     SigningPublicKey? peerKey,
-  }) : protocol = options.protocol,
-       _peerKey = peerKey,
-       output = PQSecureStreamWriter.internal(
-         ctx.aead(aead),
-         _half(sessionKey, first: isClient),
-         sink,
-         destroy,
-       ),
-       input = PQSecureStreamReader.internal(
-         ctx.aead(aead),
-         _half(sessionKey, first: !isClient),
-         frames,
-         options,
-         destroy: destroy,
-         output: sink,
-       ) {
+  }) {
+    final writer = PQSecureStreamWriter.internal(
+      ctx.aead(aead),
+      _half(sessionKey, first: isClient),
+      sink,
+      destroy,
+    );
+    final reader = PQSecureStreamReader.internal(
+      ctx.aead(aead),
+      _half(sessionKey, first: !isClient),
+      frames,
+      options,
+      destroy: destroy,
+      output: sink,
+      // A failed read tears down the shared transport: stop sending too.
+      onFailure: writer.markFailed,
+    );
     zeroize(sessionKey);
+    return PQSecureChannel._parts(
+      writer,
+      reader,
+      aead,
+      options.protocol,
+      peerId,
+      peerKey,
+    );
   }
 
   /// One 32-byte half of [key], copied once (no intermediate copy is left
@@ -338,7 +358,9 @@ final class PQSecureChannel {
 
   /// [accept], calling [onHello] once a well-formed ClientHello has arrived:
   /// the point from which the handshake costs the server real work. If it
-  /// returns `false`, the handshake is refused as busy.
+  /// returns `false`, the handshake is refused as busy. [onSettled] runs
+  /// once the handshake's work has really stopped, which may be after the
+  /// returned future has failed with a timeout.
   @internal
   static Future<PQSecureChannel> acceptInternal(
     Stream<List<int>> input,
@@ -350,16 +372,18 @@ final class PQSecureChannel {
     PQSecureChannelOptions options = const PQSecureChannelOptions(),
     void Function()? destroy,
     bool Function()? onHello,
+    void Function()? onSettled,
   }) {
     final e = engine ?? PostQuantumCryptoEngine();
     final frames = FrameReader(input);
+    // Each client message must arrive within stepTimeout.
+    Future<T> step<T>(Future<T> next, String what) => next.timeout(
+      options.stepTimeout,
+      onTimeout: () => throw PQSecureChannelException('$what timed out'),
+    );
     return _handshake(frames, output, destroy, options, (h) async {
       final ctx = e.ctx;
-      final hello = await frames.require().timeout(
-        options.helloTimeout,
-        onTimeout: () =>
-            throw const PQSecureChannelException('ClientHello timed out'),
-      );
+      final hello = await step(frames.require(), 'ClientHello');
       h.check();
       final (aead, protocol, clientId) = _parse(hello, (r) {
         _expectType(r, _clientHello);
@@ -411,7 +435,7 @@ final class PQSecureChannel {
               .toBytes(),
         );
 
-        final keyExchange = await frames.require();
+        final keyExchange = await step(frames.require(), 'KeyExchange');
         h.check();
         final message = _parse(keyExchange, (r) {
           _expectType(r, _keyExchange);
@@ -442,16 +466,19 @@ final class PQSecureChannel {
               authorizeClient,
               clientId,
               _clientAuthMessage(transcript, keyExchange),
+              read: () => step(channel.input.readRecord(), 'ClientAuth'),
             );
           }
-          await channel._expectFinished();
+          await channel._expectFinished(
+            read: () => step(channel.input.readRecord(), 'Finished'),
+          );
           h.check();
           channel.output.writeRecord(RecordType.finished, Uint8List(0));
         });
       } finally {
         ephemeral.privateKey.destroy();
       }
-    });
+    }, onSettled: onSettled);
   }
 
   // ---------------------------------------------------------------------------
@@ -521,11 +548,16 @@ final class PQSecureChannel {
     StreamSink<List<int>> output,
     void Function()? destroy,
     PQSecureChannelOptions options,
-    Future<PQSecureChannel> Function(_HandshakeState h) body,
-  ) async {
+    Future<PQSecureChannel> Function(_HandshakeState h) body, {
+    void Function()? onSettled,
+  }) async {
     final state = _HandshakeState();
+    final run = body(state);
+    // When the body itself ends, which can be after a timeout has already
+    // failed the handshake (a slow authorizer, for one).
+    if (onSettled != null) run.whenComplete(onSettled).ignore();
     try {
-      return await body(state).timeout(options.handshakeTimeout);
+      return await run.timeout(options.handshakeTimeout);
     } catch (e) {
       state.abandoned = true;
       await teardown(frames, output, destroy);
@@ -570,9 +602,10 @@ final class PQSecureChannel {
     PostQuantumCryptoEngine engine,
     ClientAuthorizer authorize,
     String clientId,
-    Uint8List signedMessage,
-  ) async {
-    final (type, payload) = await input.readRecord();
+    Uint8List signedMessage, {
+    required Future<(int, Uint8List)> Function() read,
+  }) async {
+    final (type, payload) = await read();
     h.check();
     if (type != RecordType.clientAuth) {
       throw const PQSecureChannelException('Client authentication required');
@@ -609,8 +642,12 @@ final class PQSecureChannel {
     _peerKey = key;
   }
 
-  Future<void> _expectFinished() async {
-    final (type, payload) = await input.readRecord();
+  /// Reads the peer's Finished, with [read] if given (the server's
+  /// per-step deadline).
+  Future<void> _expectFinished({
+    Future<(int, Uint8List)> Function()? read,
+  }) async {
+    final (type, payload) = await (read ?? input.readRecord)();
     if (type != RecordType.finished || payload.isNotEmpty) {
       throw const PQSecureChannelException('Expected Finished');
     }

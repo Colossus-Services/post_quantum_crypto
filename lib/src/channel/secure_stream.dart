@@ -374,6 +374,7 @@ final class PQSecureStreamWriter {
   int _seq = 0;
   bool _closed = false;
   bool _failed = false;
+  Future<void>? _closing;
 
   @internal
   PQSecureStreamWriter.internal(
@@ -417,9 +418,17 @@ final class PQSecureStreamWriter {
   }
 
   /// Writes every message of [messages], then [close]s.
+  ///
+  /// If [messages] errors or a message cannot be written, the writer is
+  /// aborted (the reader sees a truncated stream) and the error rethrown.
   Future<void> addStream(Stream<List<int>> messages) async {
-    await for (final m in messages) {
-      add(m);
+    try {
+      await for (final m in messages) {
+        add(m);
+      }
+    } catch (_) {
+      await abort();
+      rethrow;
     }
     await close();
   }
@@ -433,17 +442,35 @@ final class PQSecureStreamWriter {
   /// for a file or socket once the data is written, for an in-memory
   /// `StreamController` once its listener has received everything. Don't
   /// await it before reading the other end of such a pipe.
-  Future<void> close() async {
-    if (!isOpen) return;
-    writeRecord(RecordType.end, Uint8List(0));
+  ///
+  /// Concurrent and repeated calls share the first call's result, so every
+  /// caller sees a close error.
+  Future<void> close() {
+    final closing = _closing;
+    if (closing != null) return closing;
+    if (_failed) return Future.value();
+    return _closing = _close();
+  }
+
+  Future<void> _close() async {
     _closed = true;
-    zeroize(_key);
     try {
+      writeRecord(RecordType.end, Uint8List(0));
       await _output.close();
     } catch (e) {
       // A file that could not be written must not look complete.
       throw asStreamError(e, 'Cannot close output');
+    } finally {
+      zeroize(_key);
     }
+  }
+
+  /// Marks the writer failed without touching the output, for when the
+  /// transport was already torn down (by the reading side of a channel).
+  @internal
+  void markFailed() {
+    _failed = true;
+    zeroize(_key);
   }
 
   /// Drops the output at once, without an End record: the reader sees a
@@ -492,6 +519,7 @@ final class PQSecureStreamReader {
   bool _ended = false;
   bool _failed = false;
   bool _cancelled = false;
+  final void Function()? _onFailure;
 
   @internal
   PQSecureStreamReader.internal(
@@ -501,10 +529,12 @@ final class PQSecureStreamReader {
     PQSecureStreamOptions options, {
     void Function()? destroy,
     StreamSink<List<int>>? output,
+    void Function()? onFailure,
   }) : _receiveTimeout = options.receiveTimeout,
        _maxMessageLength = options.maxMessageLength,
        _destroy = destroy,
-       _output = output;
+       _output = output,
+       _onFailure = onFailure;
 
   /// Whether the End record has been read.
   bool get isDone => _ended;
@@ -609,6 +639,8 @@ final class PQSecureStreamReader {
     if (_failed) return;
     _failed = true;
     zeroize(_key);
+    // In a channel the output is shared: its writer must stop too.
+    _onFailure?.call();
     await teardown(_frames, _output, _destroy);
   }
 }
