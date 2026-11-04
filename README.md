@@ -293,29 +293,78 @@ already share. Every stream gets a random salt, so the key can be reused.
 **`PQSecureServer` / `PQSecureSocket`** (`post_quantum_crypto_io`): the
 channel over TCP.
 
+### Simple PQSecureSocket example
+
+An echo server and a client in one program:
+
+```dart
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:post_quantum_crypto/post_quantum_crypto_io.dart';
+
+Future<void> main() async {
+  final engine = PostQuantumCryptoEngine();
+
+  // The server's long-term identity; clients pin its public key.
+  final identity = engine.generateSigningKeyPair();
+
+  // Server: echo every message back.
+  final server = await PQSecureServer.bind(
+    InternetAddress.loopbackIPv4,
+    4433,
+    identity: identity,
+    serverId: 'echo.example',
+  );
+  server.channels.listen((channel) async {
+    await for (final message in channel.messages) {
+      channel.send(message);
+    }
+    await channel.close();
+  });
+
+  // Client: the handshake fails unless the server proves the pinned key.
+  final channel = await PQSecureSocket.connect(
+    InternetAddress.loopbackIPv4,
+    4433,
+    serverKey: identity.publicKey,
+    serverId: 'echo.example',
+  );
+  channel.send(utf8.encode('hello, post-quantum world'));
+  print(utf8.decode((await channel.receive())!)); // hello, post-quantum world
+
+  await channel.close();
+  await channel.receive(); // null: the server has closed its side too
+  await server.close();
+}
+```
+
+In a real deployment, the client gets the server's public key through a
+trusted channel: shipped with the app, or a pinned PEM. It never trusts a
+key the connection itself supplies.
+
+To also authenticate clients, give the server an `authorizeClient` callback,
+and give each client its own `SigningKeyPair`:
+
 ```dart
 final server = await PQSecureServer.bind(
   InternetAddress.anyIPv4, 4433,
-  identity: serverIdentity, // SigningKeyPair
-  serverId: 'sync.example.com',
-  authorizeClient: (key, clientId) => allowedClients.contains(key), // optional
+  identity: identity,
+  serverId: 'echo.example',
+  authorizeClient: (clientKey, clientId) => allowedClients.contains(clientKey),
 );
-server.channels.listen((channel) async {
-  await for (final message in channel.messages) {
-    channel.send(message); // echo
-  }
-  await channel.close();
-});
 
 final channel = await PQSecureSocket.connect(
-  'sync.example.com', 4433,
-  serverKey: pinnedServerKey, // SigningPublicKey
-  serverId: 'sync.example.com',
-  clientIdentity: myKeyPair, // when the server requires it
+  'echo.example', 4433,
+  serverKey: pinnedServerKey,
+  serverId: 'echo.example',
+  clientId: 'alice',
+  clientIdentity: aliceKeyPair, // proves alice's key to the server
 );
-channel.send(utf8.encode('hello'));
-final reply = await channel.receive(); // null once the server closes
 ```
+
+[`example/secure_socket.dart`](example/secure_socket.dart) shows both,
+including refused connections.
 
 `PQSecureChannel.connect` / `accept` run the same handshake over any
 `Stream<List<int>>` and `StreamSink<List<int>>`, for example a WebSocket.
