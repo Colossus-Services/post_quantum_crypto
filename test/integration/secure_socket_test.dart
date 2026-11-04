@@ -251,14 +251,53 @@ void main() {
   });
 
   test('close completes when nobody listens to channels', () async {
+    // Also binds with the default engine.
+    final server = await PQSecureServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+      identity: identity,
+      serverId: serverId,
+    );
+    await server.close().timeout(const Duration(seconds: 5));
+  });
+
+  test('a handshake completing after close is not delivered', () async {
+    final entered = Completer<void>();
+    final release = Completer<void>();
     final server = await PQSecureServer.bind(
       InternetAddress.loopbackIPv4,
       0,
       identity: identity,
       serverId: serverId,
       engine: engine,
+      options: options,
+      authorizeClient: (_, _) async {
+        entered.complete();
+        await release.future;
+        return true;
+      },
     );
-    await server.close().timeout(const Duration(seconds: 5));
+    final delivered = <PQSecureChannel>[];
+    server.channels.listen(delivered.add);
+    final client = PQSecureSocket.connect(
+      server.address,
+      server.port,
+      serverKey: identity.publicKey,
+      serverId: serverId,
+      clientIdentity: alice,
+      engine: engine,
+      options: options,
+    );
+    await entered.future;
+    await server.close();
+    release.complete();
+    // The server drops the late channel instead of delivering it.
+    final channel = await client;
+    await expectLater(
+      channel.receive(),
+      throwsA(isA<PQSecureStreamException>()),
+    );
+    expect(delivered, isEmpty);
   });
 
   test('close completes while a channel is being handled', () async {

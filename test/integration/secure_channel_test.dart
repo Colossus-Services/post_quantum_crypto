@@ -164,6 +164,35 @@ Future<void> expectHandshakeFails(
   ]);
 }
 
+/// Forwards to [_inner], but its close fails, like a connection reset by a
+/// peer that has already gone.
+final class _CloseFailsSink implements StreamSink<List<int>> {
+  final StreamSink<List<int>> _inner;
+
+  _CloseFailsSink(this._inner);
+
+  @override
+  void add(List<int> data) => _inner.add(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _inner.addError(error, stackTrace);
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => _inner.addStream(stream);
+
+  @override
+  Future<void> close() => Future.error(const SocketLikeError());
+
+  @override
+  Future<void> get done => _inner.done;
+}
+
+/// A transport error, as a socket would raise it.
+final class SocketLikeError implements Exception {
+  const SocketLikeError();
+}
+
 /// Reframes [body] with a fresh length prefix.
 Uint8List frame(List<int> body) => Uint8List.fromList([
   ...(Uint8List(4)..buffer.asByteData().setUint32(0, body.length)),
@@ -429,6 +458,23 @@ void main() {
       expect(w.clientFrames, isEmpty);
     });
 
+    test('a transport error during the handshake is reported', () async {
+      // An output that is already closed: writing the ClientHello fails
+      // with a StateError, not a library error.
+      final closed = StreamController<List<int>>()..stream.listen((_) {});
+      await closed.close();
+      await expectLater(
+        PQSecureChannel.connect(
+          const Stream.empty(),
+          closed,
+          serverKey: identity.publicKey,
+          serverId: serverId,
+          engine: engine,
+        ),
+        handshakeError('Handshake failed (StateError)'),
+      );
+    });
+
     test('a silent peer times out', () async {
       final w = Wire();
       w.toServer.stream.listen((_) {}); // nobody answers
@@ -516,9 +562,15 @@ void main() {
     });
 
     test('a handshake abandoned on timeout stops at its next step', () async {
+      // Ordered with completers, not sleeps, so a slow runner cannot
+      // reorder the steps: the authorizer is entered, the handshake times
+      // out while it waits, and only then does it approve.
       final w = Wire();
-      var authorizerDone = false;
-      final server = PQSecureChannel.accept(
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final approved = Completer<void>();
+      var settled = false;
+      final server = PQSecureChannel.acceptInternal(
         w.toServer.stream,
         w.serverOut,
         identity: identity,
@@ -526,22 +578,29 @@ void main() {
         engine: engine,
         options: const PQSecureChannelOptions(
           protocol: 'test/v1',
-          handshakeTimeout: Duration(milliseconds: 300),
+          // Long enough to reach the authorizer on a slow runner.
+          handshakeTimeout: Duration(seconds: 3),
         ),
-        // Outlasts the timeout, then allows the client.
         authorizeClient: (_, _) async {
-          await Future<void>.delayed(const Duration(milliseconds: 600));
-          authorizerDone = true;
+          entered.complete();
+          await release.future;
+          approved.complete();
           return true;
         },
+        onSettled: () => settled = true,
       );
       final client = startClient(w, clientIdentity: clientKey);
+      await entered.future;
       await Future.wait([
         expectLater(server, handshakeError('timed out')),
         expectLater(client, handshakeError()),
       ]);
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      expect(authorizerDone, isTrue);
+      // The handshake has failed, but its work is still in the authorizer.
+      expect(settled, isFalse);
+      release.complete();
+      await approved.future;
+      await pumpEventQueue();
+      expect(settled, isTrue);
       // The late approval wrote nothing: only the ServerHello went out.
       expect(w.serverFrames, hasLength(1));
     });
@@ -826,6 +885,23 @@ void main() {
       expect(() => client.send([1]), throwsStateError);
       expect(await server.receive(), isNull);
       await server.close();
+    });
+
+    test('close tolerates a transport that fails to close', () async {
+      final w = Wire();
+      final server = startServer(w);
+      final client = await PQSecureChannel.connect(
+        w.toClient.stream,
+        _CloseFailsSink(w.clientOut),
+        serverKey: identity.publicKey,
+        serverId: serverId,
+        engine: engine,
+        options: options,
+      );
+      await server;
+      // The peer may already be gone: close() does not throw.
+      await client.close();
+      expect(client.canSend, isFalse);
     });
 
     test('close is a half-close: the closer still receives', () async {
