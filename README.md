@@ -48,6 +48,9 @@ Runnable examples (`dart run example/<name>.dart`):
   PEM export.
 - [`file_encryption.dart`](example/file_encryption.dart): streaming file
   encryption, a file-backed key store and password-protected key export.
+- [`secure_socket.dart`](example/secure_socket.dart): a post-quantum secure
+  channel over TCP (ML-DSA server authentication, X-Wing key exchange with
+  forward secrecy, AES-256-GCM records). An example protocol, not TLS.
 
 ## Installation
 
@@ -238,6 +241,12 @@ final key = engine.acceptHybridKey(
 The key stays secret if either ML-KEM-768 or X25519 is unbroken. Non-hybrid
 KEMs are rejected, which prevents downgrades. **This is not TLS and not
 authenticated**: obtain the responder's public key through a trusted channel.
+
+[`example/secure_socket.dart`](example/secure_socket.dart) builds an
+authenticated channel on top of it: the server signs a fresh X-Wing key with
+its pinned ML-DSA identity for each connection (forward secrecy), and
+messages travel as numbered AES-256-GCM records that detect tampering,
+replay, reordering and truncation.
 
 ## Keys
 

@@ -1,3 +1,35 @@
+## 2.2.2
+
+### Documentation
+
+- **New example: `example/secure_socket.dart`.** A post-quantum secure
+  channel over a TCP socket, built only from the public API:
+  - the server signs a fresh X-Wing key pair, generated for each
+    connection, with its pinned ML-DSA-65 identity key, so a
+    man-in-the-middle cannot substitute its own key, and recorded traffic
+    stays secret if the identity key later leaks (forward secrecy);
+  - `establishHybridKey` / `acceptHybridKey` derive per-direction
+    AES-256-GCM keys bound to both ids and the hello transcript, confirmed
+    by encrypted Finished records;
+  - application messages travel as numbered records, so tampering, replay,
+    reordering, reflection, dropped records and truncation (a stream that
+    ends without an authenticated Close) are all detected;
+  - frame and message sizes are bounded before buffering, and the handshake
+    has a timeout.
+
+  It is an example protocol, not TLS, and authenticates only the server.
+  README lists it next to the X-Wing section.
+
+### Tests
+
+- `test/integration/secure_socket_example_test.dart` runs the example's
+  channel over a real loopback socket and over an in-memory wire that acts
+  as a man-in-the-middle: identity and server-id mismatches, a substituted
+  ephemeral key, modified hello / signature / key exchange, version and
+  framing errors, tampered, retyped, replayed, reordered, dropped and
+  reflected records, truncation, oversized frames and messages, half-close
+  and abort.
+
 ## 2.2.1
 
 ### Security
