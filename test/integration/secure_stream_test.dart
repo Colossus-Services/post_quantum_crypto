@@ -12,9 +12,14 @@ import '../support/test_engine.dart';
 final class Captured {
   final _controller = StreamController<List<int>>();
   final frames = <Uint8List>[];
-  late final Future<void> done = _controller.stream.forEach(
-    (f) => frames.add(Uint8List.fromList(f)),
-  );
+
+  /// Completes when the writer closes its output. Listening starts at once:
+  /// a controller's `close()` only completes once someone listens.
+  late final Future<void> done;
+
+  Captured() {
+    done = _controller.stream.forEach((f) => frames.add(Uint8List.fromList(f)));
+  }
 
   StreamSink<List<int>> get sink => _controller.sink;
 
@@ -27,6 +32,24 @@ final class Captured {
   ]);
 
   Uint8List get bytes => Uint8List.fromList([for (final f in frames) ...f]);
+}
+
+/// A sink whose close fails, like a file on a full disk.
+final class _FailingSink implements StreamSink<List<int>> {
+  @override
+  void add(List<int> data) {}
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => stream.drain();
+
+  @override
+  Future<void> close() => Future.error(const FormatException('disk full'));
+
+  @override
+  Future<void> get done => Future.value();
 }
 
 Matcher streamError([String? message]) => throwsA(
@@ -378,8 +401,10 @@ void main() {
       expect(utf8.decode((await r.read())!), 'first');
       writer.add(utf8.encode('second'));
       expect(utf8.decode((await r.read())!), 'second');
-      await writer.close();
+      // On an in-memory pipe, close() completes once the reader drains it.
+      final closing = writer.close();
       expect(await r.read(), isNull);
+      await closing;
     });
 
     test('addStream writes every message and closes', () async {
@@ -399,6 +424,12 @@ void main() {
       await writer.close();
       expect(writer.isOpen, isFalse);
       expect(() => writer.add([1]), throwsStateError);
+    });
+
+    test('an output that fails to close is reported', () async {
+      final writer = toRecipient(_FailingSink())..add([1]);
+      await expectLater(writer.close(), streamError('Cannot close output'));
+      expect(writer.isOpen, isFalse);
     });
 
     test('an aborted writer leaves a truncated stream', () async {
@@ -458,7 +489,9 @@ void main() {
       expect(reader.read, throwsStateError);
       writer.add([9]);
       expect(await pending, [9]);
-      await writer.close();
+      final closing = writer.close();
+      expect(await reader.read(), isNull);
+      await closing;
     });
   });
 }

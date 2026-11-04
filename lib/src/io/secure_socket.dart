@@ -9,6 +9,14 @@ import '../engine.dart';
 import '../errors.dart';
 import '../keys/keys.dart';
 
+/// Sends records without Nagle delay, and keeps write-side errors (a reset
+/// by the peer) from escaping as uncaught errors: the read side reports
+/// them as [SecureStreamException]s.
+void _prepare(Socket socket) {
+  socket.setOption(SocketOption.tcpNoDelay, true);
+  socket.done.ignore();
+}
+
 /// Client side of a [SecureChannel] over TCP.
 ///
 /// Named `PQSecureSocket` so it does not clash with `dart:io`'s TLS
@@ -32,7 +40,7 @@ abstract final class PQSecureSocket {
     Duration? connectTimeout,
   }) async {
     final socket = await Socket.connect(host, port, timeout: connectTimeout);
-    socket.setOption(SocketOption.tcpNoDelay, true);
+    _prepare(socket);
     return SecureChannel.connect(
       socket,
       socket,
@@ -139,7 +147,7 @@ final class PQSecureServer {
       return;
     }
     _pending++;
-    socket.setOption(SocketOption.tcpNoDelay, true);
+    _prepare(socket);
     SecureChannel.accept(
           socket,
           socket,

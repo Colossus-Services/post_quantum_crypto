@@ -431,7 +431,13 @@ final class SecureChannel {
   /// half-close. [receive] still returns the peer's remaining messages until
   /// its own close, and the connection is released once both sides have
   /// closed. Call [abort] to stop reading from a peer that does not close.
-  Future<void> close() => output.close();
+  Future<void> close() async {
+    try {
+      await output.close();
+    } on SecureStreamException {
+      // The peer may already be gone; its side reports what it received.
+    }
+  }
 
   /// Drops the connection at once in both directions: the peer sees a
   /// truncated stream, and a pending [receive] fails with
@@ -463,6 +469,11 @@ final class SecureChannel {
         TimeoutException() => const SecureChannelException(
           'Handshake timed out',
         ),
+        // The peer hung up: most often it refused us.
+        _ when identical(e, closedByPeer) || identical(e, truncatedStream) =>
+          const SecureChannelException(
+            'Connection closed by peer during the handshake',
+          ),
         SecureStreamException(:final message) ||
         PostQuantumCryptoException(
           :final message,

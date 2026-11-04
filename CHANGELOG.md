@@ -1,34 +1,84 @@
-## 2.2.2
+## 2.3.0
+
+### Added
+
+Three layers of protected messaging, each built on the one before.
+
+- **`SecureStream`: protected messages over any byte stream.** It works
+  over a file, a socket, a pipe or a message queue, and runs in browsers.
+  - One direction of messages as numbered AEAD records (AES-256-GCM or
+    ChaCha20-Poly1305). Messages keep their boundaries and are sent as soon
+    as they are added.
+  - Tampering, retyping, replay, reordering and dropped records fail to
+    decrypt. An authenticated End record reveals truncation, and data after
+    it is rejected.
+  - Frames (64 KiB) and messages (`maxMessageLength`) are bounded before
+    buffering, and reading stays linear however finely the input is
+    split. An optional `receiveTimeout` drops a stalled writer.
+  - `encryptTo` / `decryptFrom` key a stream to a recipient's ML-KEM or
+    X-Wing key, with no round trip (files, store-and-forward).
+    `encryptWithKey` / `decryptWithKey` key it from a shared key, with a
+    per-stream salt so the key can be reused.
+  - `SecureStreamWriter.close` reports an output that fails to close (a
+    write error), so an incomplete file never looks complete.
+- **`SecureChannel`: an authenticated two-way channel over any byte
+  stream.** Each direction is a `SecureStream` (`channel.output` /
+  `channel.input`).
+  - The server signs a fresh X-Wing key, generated for each connection,
+    with its ML-DSA (or SLH-DSA) identity key, which the client has
+    pinned. A man-in-the-middle cannot substitute its own key, and
+    recorded traffic stays secret if the identity key later leaks (forward
+    secrecy).
+  - Optional client authentication: the server sets a signed flag, and
+    the client proves its own key inside an encrypted record (hidden from
+    passive observers). A `ClientAuthorizer` callback decides whether that
+    key may connect.
+  - The session keys are bound to the application `protocol`, both ids and
+    the hello transcript, and confirmed by Finished records. The handshake
+    has a timeout, and the ephemeral key is destroyed after it.
+  - `close` is a half-close; `abort` drops the connection at once.
+- **`PQSecureSocket` / `PQSecureServer`** (`post_quantum_crypto_io`):
+  `SecureChannel` over TCP.
+  - The server delivers established channels on `channels` and reports
+    refused handshakes to `onHandshakeError`.
+  - `maxPendingHandshakes` caps concurrent handshakes, so a flood of idle
+    connections cannot make the server sign without limit.
+- **`SecureStreamException`** (stream and channel failures) and its
+  subclass **`SecureChannelException`** (handshake failures).
+
+These are package-specific protocols, not TLS.
 
 ### Documentation
 
-- **New example: `example/secure_socket.dart`.** A post-quantum secure
-  channel over a TCP socket, built only from the public API:
-  - the server signs a fresh X-Wing key pair, generated for each
-    connection, with its pinned ML-DSA-65 identity key, so a
-    man-in-the-middle cannot substitute its own key, and recorded traffic
-    stays secret if the identity key later leaks (forward secrecy);
-  - `establishHybridKey` / `acceptHybridKey` derive per-direction
-    AES-256-GCM keys bound to both ids and the hello transcript, confirmed
-    by encrypted Finished records;
-  - application messages travel as numbered records, so tampering, replay,
-    reordering, reflection, dropped records and truncation (a stream that
-    ends without an authenticated Close) are all detected;
-  - frame and message sizes are bounded before buffering, and the handshake
-    has a timeout.
-
-  It is an example protocol, not TLS, and authenticates only the server.
-  README lists it next to the X-Wing section.
+- New examples: `example/secure_stream.dart` (an append-style encrypted
+  file, truncation detection, a live pipe with a shared key) and
+  `example/secure_socket.dart` (an echo server with client
+  authentication).
+- README: a "Secure streams and channels" section.
 
 ### Tests
 
-- `test/integration/secure_socket_example_test.dart` runs the example's
-  channel over a real loopback socket and over an in-memory wire that acts
-  as a man-in-the-middle: identity and server-id mismatches, a substituted
-  ephemeral key, modified hello / signature / key exchange, version and
-  framing errors, tampered, retyped, replayed, reordered, dropped and
-  reflected records, truncation, oversized frames and messages, half-close
-  and abort.
+- `secure_stream_test.dart` covers:
+  - recipient (ML-KEM-768, X-Wing) and shared-key streams;
+  - wrong key, protocol or key mode;
+  - a modified header or record, reordering, truncation, data after the
+    end;
+  - AEAD policy, the size limit, the receive timeout, cancel, abort, a
+    failing output and live pipes.
+- `secure_channel_test.dart` runs the channel through an in-memory wire
+  that acts as a man-in-the-middle:
+  - handshake: unpinned identity, wrong server id, a substituted ephemeral
+    key, modified hello / signature / key exchange / flags, version, AEAD
+    and protocol mismatches, malformed and trailing data, timeout;
+  - client authentication: authorized, unauthorized, a throwing or async
+    authorizer, a missing identity, stripped flags, a dropped ClientAuth;
+  - records: tampered, retyped, replayed, reordered, dropped and reflected
+    records, truncation, mid-frame EOF, oversized and empty frames,
+    half-close, abort.
+- `secure_socket_test.dart` covers TCP echo with several clients, client
+  authorization, an unpinned server, `maxPendingHandshakes`, server close
+  and a `SecureStream` file round trip and truncation.
+- `test/browser` runs a stream and a channel under dart2js and dart2wasm.
 
 ## 2.2.1
 

@@ -410,7 +410,14 @@ final class SecureStreamWriter {
   }
 
   /// Writes the End record and closes the output, waiting for it to flush.
-  /// Safe to call more than once.
+  /// Safe to call more than once. Throws [SecureStreamException] if the
+  /// output fails to close (for a file, a write error): the stream may then
+  /// be incomplete.
+  ///
+  /// The returned future completes when the output's own `close()` does:
+  /// for a file or socket once the data is written, for an in-memory
+  /// `StreamController` once its listener has received everything. Don't
+  /// await it before reading the other end of such a pipe.
   Future<void> close() async {
     if (!isOpen) return;
     writeRecord(RecordType.end, Uint8List(0));
@@ -418,8 +425,9 @@ final class SecureStreamWriter {
     zeroize(_key);
     try {
       await _output.close();
-    } catch (_) {
-      // The peer may already be gone.
+    } catch (e) {
+      // A file that could not be written must not look complete.
+      throw asStreamError(e, 'Cannot close output');
     }
   }
 
@@ -544,11 +552,7 @@ final class SecureStreamReader {
   @internal
   Future<(int, Uint8List)> readRecord() async {
     final frame = await _nextFrame();
-    if (frame == null) {
-      throw const SecureStreamException(
-        'Stream ended without an End record (truncated)',
-      );
-    }
+    if (frame == null) throw truncatedStream;
     final type = frame[0];
     final aad = RecordType.aads[type];
     final plaintext = aad == null

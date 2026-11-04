@@ -13,6 +13,16 @@ import '../errors.dart';
 @internal
 const int frameLimit = 64 * 1024;
 
+/// The input ended where a header or handshake message was expected.
+@internal
+const closedByPeer = SecureStreamException('Stream closed by peer');
+
+/// The input ended before the End record.
+@internal
+const truncatedStream = SecureStreamException(
+  'Stream ended without an End record (truncated)',
+);
+
 /// Writes [body] as one frame (a single `add`).
 @internal
 void writeFrame(StreamSink<List<int>> output, Uint8List body) {
@@ -66,9 +76,7 @@ final class FrameReader {
   }
 
   /// [next], where the stream must not end.
-  Future<Uint8List> require() async =>
-      await next() ??
-      (throw const SecureStreamException('Stream closed by peer'));
+  Future<Uint8List> require() async => await next() ?? (throw closedByPeer);
 
   /// Stops reading. Safe to call more than once.
   Future<void> cancel() async {

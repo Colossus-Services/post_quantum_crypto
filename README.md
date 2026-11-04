@@ -16,6 +16,9 @@
 - **Signatures**: ML-DSA-65 (FIPS 204), optional SLH-DSA (FIPS 205),
   detached signatures, signed artifacts and signed manifests.
 - **Hybrid**: X-Wing (ML-KEM-768 + X25519) recipients and key establishment.
+- **Secure streams and channels**: protected messages over any byte stream
+  (files, sockets, pipes), and an authenticated two-way channel with forward
+  secrecy, including over TCP.
 - **Keys**: seed-form keys, fingerprints, lifecycle metadata, SPKI/PKCS#8
   (OpenSSL-compatible), Argon2id-protected exports, key stores, rotation.
 - **Policies**: allowed algorithms, minimum security category, hybrid-only,
@@ -48,9 +51,11 @@ Runnable examples (`dart run example/<name>.dart`):
   PEM export.
 - [`file_encryption.dart`](example/file_encryption.dart): streaming file
   encryption, a file-backed key store and password-protected key export.
-- [`secure_socket.dart`](example/secure_socket.dart): a post-quantum secure
-  channel over TCP (ML-DSA server authentication, X-Wing key exchange with
-  forward secrecy, AES-256-GCM records). An example protocol, not TLS.
+- [`secure_stream.dart`](example/secure_stream.dart): an append-style
+  encrypted file to a recipient's key, truncation detection, and a live
+  pipe with a shared key.
+- [`secure_socket.dart`](example/secure_socket.dart): an echo server over
+  TCP with server and client authentication.
 
 ## Installation
 
@@ -242,11 +247,78 @@ The key stays secret if either ML-KEM-768 or X25519 is unbroken. Non-hybrid
 KEMs are rejected, which prevents downgrades. **This is not TLS and not
 authenticated**: obtain the responder's public key through a trusted channel.
 
-[`example/secure_socket.dart`](example/secure_socket.dart) builds an
-authenticated channel on top of it: the server signs a fresh X-Wing key with
-its pinned ML-DSA identity for each connection (forward secrecy), and
-messages travel as numbered AES-256-GCM records that detect tampering,
-replay, reordering and truncation.
+For an authenticated connection, use a `SecureChannel` (below), which
+builds on this.
+
+## Secure streams and channels
+
+Three layers, each built on the one before. All are package-specific
+protocols, not TLS.
+
+**`SecureStream`**: one direction of protected messages over any byte
+stream: a file, a socket, a pipe, a queue.
+- Messages are numbered AEAD records. They keep their boundaries and are
+  written as soon as they are added.
+- Tampering, replay, reordering, dropped records and truncation are all
+  detected: the stream ends with an authenticated End record.
+
+```dart
+// To a recipient's ML-KEM or X-Wing key; no round trip needed.
+final writer = SecureStream.encryptTo(
+  File('audit.log.pqs').openWrite(),
+  recipient: auditor.publicKey,
+);
+writer.add(utf8.encode('login alice'));
+await writer.close(); // writes the End record
+
+final reader = await SecureStream.decryptFrom(
+  File('audit.log.pqs').openRead(),
+  privateKey: auditor.privateKey,
+);
+await for (final message in reader.messages) { /* ... */ }
+// A file cut short throws SecureStreamException('... truncated').
+```
+
+`encryptWithKey` / `decryptWithKey` key a stream from a key both ends
+already share. Every stream gets a random salt, so the key can be reused.
+
+**`SecureChannel`**: an authenticated, two-way channel over any byte stream.
+- The server signs a fresh X-Wing key, generated for each connection, with
+  its identity key, which the client has pinned. This gives server
+  authentication and forward secrecy, secure while either ML-KEM-768 or
+  X25519 holds.
+- The server can require clients to authenticate with their own keys.
+- Each direction is a `SecureStream`.
+
+**`PQSecureServer` / `PQSecureSocket`** (`post_quantum_crypto_io`): the
+channel over TCP.
+
+```dart
+final server = await PQSecureServer.bind(
+  InternetAddress.anyIPv4, 4433,
+  identity: serverIdentity, // SigningKeyPair
+  serverId: 'sync.example.com',
+  authorizeClient: (key, clientId) => allowedClients.contains(key), // optional
+);
+server.channels.listen((channel) async {
+  await for (final message in channel.messages) {
+    channel.send(message); // echo
+  }
+  await channel.close();
+});
+
+final channel = await PQSecureSocket.connect(
+  'sync.example.com', 4433,
+  serverKey: pinnedServerKey, // SigningPublicKey
+  serverId: 'sync.example.com',
+  clientIdentity: myKeyPair, // when the server requires it
+);
+channel.send(utf8.encode('hello'));
+final reply = await channel.receive(); // null once the server closes
+```
+
+`SecureChannel.connect` / `accept` run the same handshake over any
+`Stream<List<int>>` and `StreamSink<List<int>>`, for example a WebSocket.
 
 ## Keys
 
@@ -347,8 +419,9 @@ Every error is a `PostQuantumCryptoException`: `InvalidInputException`,
 `DecryptionFailedException`, `SignatureVerificationException`,
 `SecureRandomUnavailableException`, `UnsupportedPlatformException`,
 `ResourceLimitExceededException`, `PolicyViolationException`,
-`KeyNotFoundException`, `ContextMismatchException` and
-`OperationCancelledException`. After parsing, every authentication failure
+`KeyNotFoundException`, `ContextMismatchException`,
+`OperationCancelledException`, `SecureStreamException` and its subclass
+`SecureChannelException` (handshake failures). After parsing, every authentication failure
 is the same `DecryptionFailedException`, so errors cannot be used as an
 oracle. Messages never contain key material.
 
@@ -440,7 +513,7 @@ for the PQ operations, and Argon2id is much slower on the web. Full table:
   | X-Wing (draft-connolly-cfrg-xwing-kem) | draft vectors |
   | Symmetric (AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, X25519, Argon2id) | Wycheproof, RFC 7748, RFC 9106 |
 - **Package-specific:** envelope, stream, signed-object, key-record and
-  password containers.
+  password containers, and the secure stream and channel protocols.
 - Test vectors and their provenance are in [test/vectors](test/vectors).
 
 ## Security
