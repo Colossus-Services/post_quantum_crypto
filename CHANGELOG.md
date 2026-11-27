@@ -1,3 +1,19 @@
+## 2.3.1
+
+### Security
+
+- **Requires `pqcrypto` ^0.4.5**, its side-channel hardening release. It
+  removes the secret-dependent division and remainder operations from the
+  ML-KEM and ML-DSA coefficient paths (KyberSlash), wipes more secret
+  intermediates, and no longer branches on message bits in ML-KEM. No
+  formats or APIs change. `doc/SECURITY.md` describes the remaining limits.
+
+### Changed
+
+- The ML-KEM provider no longer catches `StateError`, which pqcrypto's
+  ML-KEM never throws. Its `ArgumentError` key rejections, still reported as
+  `InvalidKeyException`, are now covered by tests.
+
 ## 2.3.0
 
 ### Added

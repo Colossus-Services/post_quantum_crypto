@@ -127,12 +127,12 @@ final class _PqKem implements KemPrimitive {
     if (m.length != 32) {
       throw const InvalidInputException('ML-KEM randomness must be 32 bytes');
     }
+    // pqcrypto validates the key (length and FIPS 203 modulus check) and
+    // reports a bad one with an ArgumentError, its only failure mode here.
     try {
       final (ct, ss) = _kem.encapsulate(publicKey, Uint8List.fromList(m));
       return (ciphertext: ct, sharedSecret: ss);
     } on ArgumentError {
-      throw const InvalidKeyException('Invalid ML-KEM encapsulation key');
-    } on StateError {
       throw const InvalidKeyException('Invalid ML-KEM encapsulation key');
     }
   }
@@ -142,11 +142,11 @@ final class _PqKem implements KemPrimitive {
     if (ciphertext.length != ciphertextLength) {
       throw const MalformedDataException('ML-KEM ciphertext has wrong length');
     }
+    // pqcrypto validates the key (length, embedded public key and its hash,
+    // FIPS 203 §7.3) and reports a bad one with an ArgumentError.
     try {
       return _kem.decapsulate(secretKey, ciphertext);
     } on ArgumentError {
-      throw const InvalidKeyException('Invalid ML-KEM decapsulation key');
-    } on StateError {
       throw const InvalidKeyException('Invalid ML-KEM decapsulation key');
     }
   }

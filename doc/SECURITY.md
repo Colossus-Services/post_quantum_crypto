@@ -106,8 +106,11 @@ both sides agree on the labels they supplied.
 
 - **Side channels.** Dart does not guarantee constant-time execution on the
   VM, JavaScript or WebAssembly. Code avoids obvious data-dependent branches
-  (and pqcrypto selects implicit-rejection results branchlessly), but no
-  constant-time or side-channel-resistance claim is made.
+  (and pqcrypto selects implicit-rejection results branchlessly). Since
+  pqcrypto 0.4.5 (required from 2.3.1), the ML-KEM and ML-DSA coefficient
+  paths no longer divide secret values (KyberSlash). Rejection sampling
+  still branches, so no constant-time or side-channel-resistance claim is
+  made.
 - **Memory hygiene is best-effort.** `destroy()` and internal zeroization
   overwrite buffers, but the garbage collector, isolates (`runInBackground`
   copies data), JavaScript engines and the OS may keep other copies. Strings
