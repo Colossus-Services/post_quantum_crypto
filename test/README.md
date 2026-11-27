@@ -34,6 +34,7 @@ Focused tests of one component or rule.
 - `key_serialization_test.dart`: key ids, `PQCR` key records, DER/PEM (PKCS#8, SPKI), password-protected keys and password-based data encryption.
 - `key_commitment_test.dart`: an "invisible salamanders" attack: one AES-GCM ciphertext valid under two data keys is rejected thanks to the envelope's key commitment.
 - `api_edge_cases_test.dart`: edges of the public API (raw key import, signature policy, canonical-map limits, password parameters, encodings, `FileKeyStorage`).
+- `pqcrypto_provider_test.dart`: the `package:pqcrypto` boundary: pqcrypto's own ML-KEM key rejections surface as `InvalidKeyException`.
 - `review_regressions_test.dart`: regression tests for findings of earlier code reviews.
 - `misc_test.dart`: text encodings and the version pin.
 
